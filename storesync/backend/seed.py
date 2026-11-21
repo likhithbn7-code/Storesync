@@ -6,13 +6,9 @@ from opensearchpy import OpenSearch
 from dotenv import load_dotenv
 from werkzeug.security import generate_password_hash
 
-# Load environment variables from .env
-backend_dir = os.path.dirname(os.path.abspath(__file__))
-dotenv_path = os.path.join(backend_dir, ".env")
-if os.path.exists(dotenv_path):
-    load_dotenv(dotenv_path=dotenv_path)
-else:
-    load_dotenv()
+# Load environment variables explicitly from .env
+dotenv_path = os.path.join(os.path.dirname(__file__), ".env")
+load_dotenv(dotenv_path=dotenv_path, override=True)
 
 POSTGRES_URI = os.getenv("POSTGRES_URI")
 OPENSEARCH_URI = os.getenv("OPENSEARCH_URI")

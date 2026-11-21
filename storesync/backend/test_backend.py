@@ -111,6 +111,47 @@ class BackendUnitTests(unittest.TestCase):
         self.assertIsNotNone(data)
         self.assertIn(res.status_code, [404, 500])
 
+    def test_auth_verify_otp_validation(self):
+        res = self.client.post("/api/auth/verify-otp", json={})
+        self.assertEqual(res.status_code, 400)
+        data = res.get_json()
+        self.assertIn("error", data)
+
+    def test_razorpay_create_order_validation(self):
+        res = self.client.post("/api/payment/razorpay/create-order", json={"items": [], "amount": 0})
+        self.assertEqual(res.status_code, 400)
+
+        res2 = self.client.post("/api/payment/razorpay/create-order", json={"items": [{"product_id": 1}], "amount": 0})
+        self.assertEqual(res2.status_code, 400)
+
+    def test_razorpay_verify_validation(self):
+        res = self.client.post("/api/payment/razorpay/verify", json={"items": []})
+        self.assertEqual(res.status_code, 400)
+
+    def test_telemetry_endpoint(self):
+        res = self.client.get("/api/telemetry")
+        self.assertEqual(res.status_code, 200)
+        data = res.get_json()
+        self.assertIn("events", data)
+        self.assertIn("lock_metrics", data)
+        self.assertIn("opensearch", data)
+        self.assertIn("summary", data)
+
+    def test_telemetry_simulate(self):
+        res = self.client.post("/api/telemetry/simulate")
+        self.assertEqual(res.status_code, 200)
+        data = res.get_json()
+        self.assertTrue(data.get("success"))
+        self.assertIn("event", data)
+
+    def test_chat_endpoint(self):
+        res = self.client.post("/api/chat", json={"message": "Do you have bluetooth headphones in Bengaluru?"})
+        self.assertEqual(res.status_code, 200)
+        data = res.get_json()
+        self.assertTrue(data.get("success"))
+        self.assertIn("reply", data)
+        self.assertIn("products", data)
+
 
 if __name__ == "__main__":
     unittest.main()

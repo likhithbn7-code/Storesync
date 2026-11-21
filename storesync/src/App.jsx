@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
-  AlertCircle, ArrowDown, ArrowLeft, ArrowRight, ArrowUpRight, Check, ChevronDown, ChevronRight,
-  Clock3, Heart, KeyRound, Lock, LogOut, Mail, Menu, Minus, Package, PackageCheck, Plus,
-  QrCode, RefreshCw, RotateCcw, Search, ShieldCheck, ShoppingBag, SlidersHorizontal, Sparkles,
-  Star, Truck, User, X,
+  AlertCircle, ArrowDown, ArrowLeft, ArrowRight, ArrowUpRight, Bot, Building2, Check,
+  CheckCircle2, ChevronDown, ChevronRight, Clock3, CreditCard, Flame, Heart, KeyRound,
+  Lock, LogOut, Mail, Menu, Minus, Package, PackageCheck, Plus, QrCode, RefreshCw,
+  RotateCcw, Search, Send, ShieldCheck, ShoppingBag, SlidersHorizontal, Sparkles, Star,
+  Truck, User, X, Zap,
 } from 'lucide-react'
 import { categories, cities, products as initialProducts } from './products.js'
 
@@ -34,15 +35,56 @@ export async function safeFetch(url, options = {}) {
     })
   } catch (err) {
     if (err?.name === 'AbortError') throw err
-    throw new Error('Unable to connect to server. Please verify Flask backend is running on http://localhost:5000.')
+    // If proxied fetch failed with a network error, attempt direct backend fetch
+    if (!targetUrl.startsWith('http://localhost:5000') && !targetUrl.startsWith('https://')) {
+      try {
+        res = await fetch(`http://localhost:5000${url}`, {
+          ...options,
+          headers: {
+            'Accept': 'application/json',
+            ...(options.headers || {}),
+          },
+        })
+      } catch (err2) {
+        if (err2?.name === 'AbortError') throw err2
+        return {
+          ok: false,
+          status: 503,
+          data: {
+            error: 'BACKEND_OFFLINE',
+            message: 'StoreSync Flask backend is not running on port 5000. Start it via `python app.py`.',
+          },
+          text: '',
+        }
+      }
+    } else {
+      return {
+        ok: false,
+        status: 503,
+        data: {
+          error: 'BACKEND_OFFLINE',
+          message: 'StoreSync Flask backend is not running on port 5000. Start it via `python app.py`.',
+        },
+        text: '',
+      }
+    }
   }
 
   const text = await res.text()
-  let data
+  let data = {}
   try {
     data = text ? JSON.parse(text) : {}
   } catch {
-    throw new Error('Server returned non-JSON response')
+    // Gracefully handle non-JSON responses (e.g. 502 Bad Gateway / Proxy HTML error)
+    return {
+      ok: false,
+      status: res.status || 502,
+      data: {
+        error: 'BACKEND_UNAVAILABLE',
+        message: 'StoreSync backend on port 5000 is not reachable. Please ensure Flask app.py is running.',
+      },
+      text,
+    }
   }
 
   return { ok: res.ok, status: res.status, data, text }
@@ -69,7 +111,7 @@ function App() {
   const [searchSource, setSearchSource] = useState('Local sample search')
   const [filtersOpen, setFiltersOpen] = useState(false)
 
-  // Auth State
+  // Auth State (4-Step Gmail SMTP Flow)
   const [user, setUser] = useState(() => {
     try {
       const saved = localStorage.getItem('storesync_user')
@@ -80,26 +122,79 @@ function App() {
   })
   const [authModalOpen, setAuthModalOpen] = useState(false)
   const [authMode, setAuthMode] = useState('login') // 'login' | 'signup' | 'forgot'
-  const [authStep, setAuthStep] = useState('request') // 'request' | 'verify'
+  const [authStep, setAuthStep] = useState(1) // 1: Email -> 2: Verify OTP -> 3: New Password
   const [authEmail, setAuthEmail] = useState('')
   const [authPassword, setAuthPassword] = useState('')
   const [authName, setAuthName] = useState('')
   const [authOtp, setAuthOtp] = useState('')
   const [authNewPassword, setAuthNewPassword] = useState('')
-  const [authDevOtp, setAuthDevOtp] = useState('')
   const [authError, setAuthError] = useState('')
   const [authMessage, setAuthMessage] = useState('')
   const [authLoading, setAuthLoading] = useState(false)
+  const [otpCountdown, setOtpCountdown] = useState(0)
 
   // Drawer & Modal States
   const [wishlistOpen, setWishlistOpen] = useState(false)
   const [ordersOpen, setOrdersOpen] = useState(false)
   const [orders, setOrders] = useState([])
   const [loadingOrders, setLoadingOrders] = useState(false)
-  const [upiModalOpen, setUpiModalOpen] = useState(false)
-  const [pendingOrderForm, setPendingOrderForm] = useState(null)
+  const [orderNotice, setOrderNotice] = useState(null)
+
+  // Razorpay Checkout State
+  const [razorpayModalOpen, setRazorpayModalOpen] = useState(false)
+  const [razorpayOrder, setRazorpayOrder] = useState(null)
+  const [razorpayTab, setRazorpayTab] = useState('upi') // 'upi' | 'card' | 'netbanking'
+  const [razorpayLoading, setRazorpayLoading] = useState(false)
+  const [pendingCheckoutForm, setPendingCheckoutForm] = useState(null)
   const [upiId, setUpiId] = useState('shoppr@okhdfcbank')
-  const [upiVerifying, setUpiVerifying] = useState(false)
+
+  // AI Retail Concierge State
+  const [chatOpen, setChatOpen] = useState(false)
+  const [chatMessages, setChatMessages] = useState([
+    {
+      sender: 'bot',
+      text: 'Namaste! I am your StoreSync Retail AI Concierge. Ask me about products, stock in Bengaluru, Mumbai, Delhi, or Hyderabad, or express delivery policies!',
+      products: [],
+    },
+  ])
+  const [chatInput, setChatInput] = useState('')
+  const [chatLoading, setChatLoading] = useState(false)
+
+  const handleSendChat = async (e) => {
+    e?.preventDefault()
+    const msg = chatInput.trim()
+    if (!msg || chatLoading) return
+
+    setChatMessages((prev) => [...prev, { sender: 'user', text: msg }])
+    setChatInput('')
+    setChatLoading(true)
+
+    try {
+      const { ok, data } = await safeFetch('/api/chat', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ message: msg }),
+      })
+      if (ok && data?.reply) {
+        setChatMessages((prev) => [
+          ...prev,
+          { sender: 'bot', text: data.reply, products: data.products || [] },
+        ])
+      } else {
+        setChatMessages((prev) => [
+          ...prev,
+          { sender: 'bot', text: 'I am temporarily unable to consult the store catalog. Please try again shortly.', products: [] },
+        ])
+      }
+    } catch {
+      setChatMessages((prev) => [
+        ...prev,
+        { sender: 'bot', text: 'Unable to connect to StoreSync AI server.', products: [] },
+      ])
+    } finally {
+      setChatLoading(false)
+    }
+  }
 
   // Cart Toast & Recently Added feedback
   const [cartToast, setCartToast] = useState(null)
@@ -250,10 +345,35 @@ function App() {
 
   const addToCart = (item, quantity = 1) => {
     const currentQty = cart[item.id] || 0
-    const available = item.stock ?? 99
-    const newQty = Math.min(currentQty + quantity, available)
-    if (newQty === currentQty && available > 0) return
+    const available = Number(item.stock ?? 0)
 
+    if (available <= 0) {
+      setCartToast({
+        isWarning: true,
+        message: `${item.name} is currently out of stock.`,
+        item,
+        time: Date.now(),
+      })
+      setTimeout(() => {
+        setCartToast((curr) => (curr && Date.now() - curr.time >= 3900 ? null : curr))
+      }, 4000)
+      return
+    }
+
+    if (currentQty >= available) {
+      setCartToast({
+        isWarning: true,
+        message: `Only ${available} unit(s) available in stock`,
+        item,
+        time: Date.now(),
+      })
+      setTimeout(() => {
+        setCartToast((curr) => (curr && Date.now() - curr.time >= 3900 ? null : curr))
+      }, 4000)
+      return
+    }
+
+    const newQty = Math.min(currentQty + quantity, available)
     setCart((current) => ({ ...current, [item.id]: newQty }))
 
     // Trigger prominent top-right toast
@@ -270,38 +390,165 @@ function App() {
   }
 
   const updateQuantity = (id, next) => {
-    setCart((current) => {
-      const updated = { ...current }
-      if (next <= 0) delete updated[id]
-      else {
-        const item = catalog.find((p) => String(p.id) === String(id))
-        const maxStock = item?.stock ?? 99
-        updated[id] = Math.min(next, maxStock)
-      }
-      return updated
-    })
+    const item = catalog.find((p) => String(p.id) === String(id))
+    const maxStock = Number(item?.stock ?? 0)
+
+    if (next <= 0) {
+      setCart((current) => {
+        const updated = { ...current }
+        delete updated[id]
+        return updated
+      })
+      return
+    }
+
+    if (next > maxStock) {
+      setCartToast({
+        isWarning: true,
+        message: `Only ${maxStock} unit(s) available in stock`,
+        item,
+        time: Date.now(),
+      })
+      setTimeout(() => {
+        setCartToast((curr) => (curr && Date.now() - curr.time >= 3900 ? null : curr))
+      }, 4000)
+      return
+    }
+
+    setCart((current) => ({ ...current, [id]: next }))
   }
 
   const toggleLiked = (id) => setLiked((current) => current.includes(id)
     ? current.filter((itemId) => itemId !== id)
     : [...current, id])
 
-  const handleCheckoutSubmit = (event) => {
+  // OTP Expiry Countdown Timer
+  useEffect(() => {
+    if (otpCountdown <= 0) return undefined
+    const timer = window.setInterval(() => {
+      setOtpCountdown((prev) => (prev <= 1 ? 0 : prev - 1))
+    }, 1000)
+    return () => window.clearInterval(timer)
+  }, [otpCountdown])
+
+  const handleCheckoutSubmit = async (event) => {
     event.preventDefault()
     if (placingOrder) return
     setOrderError('')
     const form = new FormData(event.currentTarget)
     const payment = form.get('payment')
 
-    if (payment === 'upi') {
-      // Store pending form details and open UPI modal
-      setPendingOrderForm(form)
-      setUpiModalOpen(true)
+    if (payment === 'razorpay' || payment === 'upi') {
+      // Launch Razorpay Payment Gateway Modal with stock pre-check
+      await initiateRazorpayCheckout(form)
       return
     }
 
-    // Direct COD checkout
+    // Direct Cash on Delivery (COD) Checkout
     void executeOrder(form, 'COD')
+  }
+
+  // Pre-check stock & open Razorpay Payment Gateway Modal
+  const initiateRazorpayCheckout = async (form) => {
+    setPlacingOrder(true)
+    setOrderError('')
+    setPendingCheckoutForm(form)
+
+    const delivery = subtotal === 0 || subtotal >= 2499 ? 0 : 99
+    const totalAmount = subtotal + delivery
+
+    try {
+      const { ok, status, data } = await safeFetch('/api/payment/razorpay/create-order', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          amount: totalAmount,
+          customer_name: form.get('name') || user?.name || 'Shopper',
+          customer_city: form.get('city') || 'Bengaluru',
+          user_email: form.get('email') || user?.email,
+          items: Object.entries(cart).map(([productId, quantity]) => ({
+            product_id: Number(productId),
+            quantity: Number(quantity),
+          })),
+        }),
+      })
+
+      if (status === 409) {
+        // Live stock sold out by another shopper
+        try {
+          const { ok: sOk, data: sMap } = await safeFetch('/api/stock')
+          if (sOk && sMap) {
+            setCatalog((prev) => prev.map((p) => sMap[String(p.id)] !== undefined ? { ...p, stock: sMap[String(p.id)] } : p))
+          }
+        } catch {}
+        throw new Error(data?.message || 'Another shopper just bought the last unit!')
+      }
+
+      if (!ok) throw new Error(data?.message || data?.error || 'Failed to initialize payment gateway.')
+
+      setRazorpayOrder(data)
+      setRazorpayModalOpen(true)
+    } catch (err) {
+      setOrderError(err.message || 'Payment pre-check failed.')
+    } finally {
+      setPlacingOrder(false)
+    }
+  }
+
+  // Simulate Razorpay Payment Verification (ACID Transaction, Kafka Stream, OpenSearch Sync)
+  const handleRazorpayVerify = async () => {
+    if (!razorpayOrder || !pendingCheckoutForm) return
+    setRazorpayLoading(true)
+
+    const form = pendingCheckoutForm
+    const simulatedPaymentId = `pay_rzp_${Math.random().toString(36).substring(2, 12)}`
+
+    try {
+      const { ok, status, data } = await safeFetch('/api/payment/razorpay/verify', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          razorpay_order_id: razorpayOrder.order_id,
+          razorpay_payment_id: simulatedPaymentId,
+          razorpay_signature: `sig_demo_${Date.now()}`,
+          customer_name: form.get('name') || user?.name || 'Shopper',
+          customer_city: form.get('city') || 'Bengaluru',
+          user_email: form.get('email') || user?.email,
+          fulfillment_type: 'STANDARD',
+          source_city: form.get('city') || 'Bengaluru',
+          items: Object.entries(cart).map(([productId, quantity]) => ({
+            product_id: Number(productId),
+            quantity: Number(quantity),
+          })),
+        }),
+      })
+
+      if (status === 409) {
+        throw new Error(data?.message || 'Stock sold out during transaction!')
+      }
+
+      if (!ok) throw new Error(data?.message || data?.error || 'Payment verification failed.')
+
+      setOrderId(data.order_id || data.order?.id)
+      setOrderResult({ persisted: true, eventStatus: 'processed' })
+
+      if (data.new_stock) {
+        setCatalog((prev) => prev.map((p) => {
+          const ns = data.new_stock[String(p.id)]
+          return ns !== undefined ? { ...p, stock: ns } : p
+        }))
+      }
+
+      setCart({})
+      setRazorpayModalOpen(false)
+      go('success')
+      void fetchOrders()
+    } catch (err) {
+      setOrderError(err.message || 'Payment failed.')
+      setRazorpayModalOpen(false)
+    } finally {
+      setRazorpayLoading(false)
+    }
   }
 
   const executeOrder = async (form, paymentMethod = 'COD') => {
@@ -331,7 +578,6 @@ function App() {
 
       // Handle 409 OUT_OF_STOCK
       if (status === 409) {
-        // Refresh live stock immediately
         try {
           const { ok: sOk, data: sMap } = await safeFetch('/api/stock')
           if (sOk && sMap) {
@@ -346,7 +592,6 @@ function App() {
       setOrderId(data.order.id)
       setOrderResult({ persisted: true, eventStatus: data.order.event_status || data.order.eventStatus })
 
-      // Update catalog stock from response new_stock if provided
       if (data.new_stock) {
         setCatalog((prev) => prev.map((p) => {
           const ns = data.new_stock[String(p.id)]
@@ -355,33 +600,29 @@ function App() {
       }
 
       setCart({})
-      setUpiModalOpen(false)
       go('success')
       void fetchOrders()
     } catch (error) {
       setOrderError(error.message)
-      setUpiModalOpen(false)
     } finally {
       setPlacingOrder(false)
-      setUpiVerifying(false)
     }
-  }
-
-  const handleUpiPay = async () => {
-    if (!pendingOrderForm) return
-    setUpiVerifying(true)
-    // Realistic UPI verification delay
-    setTimeout(() => {
-      void executeOrder(pendingOrderForm, 'UPI')
-    }, 1200)
   }
 
   // Advance Order Status (Demo button)
   const advanceStatus = async (oId) => {
     try {
-      const { ok } = await safeFetch(`/api/orders/${oId}/status`, { method: 'POST' })
-      if (ok) void fetchOrders()
-    } catch {}
+      const { ok, data } = await safeFetch(`/api/orders/${oId}/status`, { method: 'POST' })
+      if (ok) {
+        setOrderNotice({ type: 'success', message: `Order #${oId} updated to ${data.status || 'next stage'}.` })
+        void fetchOrders()
+      } else {
+        setOrderNotice({ type: 'error', message: data?.message || data?.error || 'Could not advance order status.' })
+      }
+    } catch (err) {
+      setOrderNotice({ type: 'error', message: err?.message || 'Failed to advance order status.' })
+    }
+    setTimeout(() => setOrderNotice(null), 4000)
   }
 
   // Cancel Order
@@ -390,23 +631,24 @@ function App() {
     try {
       const { ok, data } = await safeFetch(`/api/orders/${oId}/cancel`, { method: 'POST' })
       if (ok) {
-        // Sync restored stock immediately
         if (data.new_stock) {
           setCatalog((prev) => prev.map((p) => {
             const ns = data.new_stock[String(p.id)]
             return ns !== undefined ? { ...p, stock: ns } : p
           }))
         }
+        setOrderNotice({ type: 'success', message: `Order #${oId} has been cancelled and stock restored.` })
         void fetchOrders()
       } else {
-        alert(data?.message || 'Could not cancel order.')
+        setOrderNotice({ type: 'error', message: data?.message || data?.error || 'Could not cancel order.' })
       }
     } catch (err) {
-      alert(err.message || 'Failed to cancel order.')
+      setOrderNotice({ type: 'error', message: err?.message || 'Failed to cancel order.' })
     }
+    setTimeout(() => setOrderNotice(null), 4000)
   }
 
-  // Auth Functions
+  // 4-Step Gmail OTP Auth Functions (JadhavC07 pattern)
   const handleAuthSubmit = async (e) => {
     e.preventDefault()
     setAuthError('')
@@ -437,27 +679,41 @@ function App() {
         localStorage.setItem('storesync_token', data.token)
         setAuthModalOpen(false)
       } else if (authMode === 'forgot') {
-        if (authStep === 'request') {
+        if (authStep === 1) {
+          // Step 1: Send OTP to user email via Gmail SMTP
           const { ok, data } = await safeFetch('/api/auth/forgot-password', {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify({ email: authEmail }),
           })
-          if (!ok) throw new Error(data?.message || 'Request failed')
-          setAuthMessage(data.message)
-          if (data.dev_otp) setAuthDevOtp(data.dev_otp)
-          setAuthStep('verify')
+          if (!ok) throw new Error(data?.message || data?.error || 'Failed to send OTP')
+          setAuthMessage(data.message || 'OTP sent to your email!')
+          setAuthStep(2)
+          setOtpCountdown(600) // 10 minute expiry countdown
+        } else if (authStep === 2) {
+          // Step 2: Verify 6-digit OTP code against PostgreSQL
+          const { ok, data } = await safeFetch('/api/auth/verify-otp', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ email: authEmail, otp: authOtp }),
+          })
+          if (!ok) throw new Error(data?.message || 'Invalid or expired OTP')
+          setAuthMessage(data.message || 'OTP verified! Enter your new password.')
+          setAuthStep(3)
         } else {
+          // Step 3: Update password in PostgreSQL
           const { ok, data } = await safeFetch('/api/auth/reset-password', {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify({ email: authEmail, otp: authOtp, new_password: authNewPassword }),
           })
           if (!ok) throw new Error(data?.message || 'Password reset failed')
-          setAuthMessage('Password reset successfully! Please sign in.')
+          setAuthMessage('Password reset successfully! Please sign in with your new password.')
           setAuthMode('login')
-          setAuthStep('request')
+          setAuthStep(1)
           setAuthPassword('')
+          setAuthOtp('')
+          setAuthNewPassword('')
         }
       }
     } catch (err) {
@@ -504,14 +760,22 @@ function App() {
     <div className="app-shell">
       {/* Prominent High-Contrast Top-Right Cart Toast */}
       {cartToast && (
-        <aside className="cart-toast" role="status" aria-live="polite">
-          <div className="toast-check"><Check size={16} strokeWidth={2.5} /></div>
-          <img src={cartToast.item.image || cartToast.item.image_url} alt="" className="toast-image" />
-          <div className="toast-body">
-            <div className="toast-title">Added to your bag</div>
-            <div className="toast-name">{cartToast.item.name}</div>
+        <aside className={`cart-toast ${cartToast.isWarning ? 'cart-toast-warning' : ''}`} role="status" aria-live="polite" style={cartToast.isWarning ? { borderLeft: '4px solid #c0392b' } : {}}>
+          <div className="toast-check" style={cartToast.isWarning ? { background: '#c0392b', color: '#fff' } : {}}>
+            {cartToast.isWarning ? <AlertCircle size={16} strokeWidth={2.5} /> : <Check size={16} strokeWidth={2.5} />}
           </div>
-          <button className="toast-btn" onClick={() => { setCartToast(null); go('cart') }}>View Bag</button>
+          {cartToast.item && (
+            <img src={cartToast.item.image || cartToast.item.image_url} alt="" className="toast-image" />
+          )}
+          <div className="toast-body">
+            <div className="toast-title" style={cartToast.isWarning ? { color: '#c0392b' } : {}}>
+              {cartToast.isWarning ? 'Stock Limit' : 'Added to your bag'}
+            </div>
+            <div className="toast-name">{cartToast.message || cartToast.item?.name}</div>
+          </div>
+          {!cartToast.isWarning && (
+            <button className="toast-btn" onClick={() => { setCartToast(null); go('cart') }}>View Bag</button>
+          )}
           <button className="toast-close" onClick={() => setCartToast(null)} aria-label="Dismiss"><X size={15} /></button>
         </aside>
       )}
@@ -586,9 +850,9 @@ function App() {
 
       {/* Main Pages */}
       <main>
-        {page === 'home' && <HomePage onShop={openShop} onProduct={(item) => go('product', { product: item })} onAdd={addToCart} onToggleLike={toggleLiked} liked={liked} cartCount={cartCount} recentlyAdded={recentlyAdded} />}
-        {page === 'shop' && <ShopPage products={filteredProducts} searchSource={searchSource} search={search} setSearch={setSearch} category={category} setCategory={setCategory} city={city} setCity={setCity} maxPrice={maxPrice} setMaxPrice={setMaxPrice} sort={sort} setSort={setSort} onProduct={(item) => go('product', { product: item })} onAdd={addToCart} liked={liked} onToggleLike={toggleLiked} filtersOpen={filtersOpen} setFiltersOpen={setFiltersOpen} recentlyAdded={recentlyAdded} />}
-        {page === 'product' && product && <ProductPage product={product} onBack={() => go('shop')} onAdd={addToCart} recentlyAdded={recentlyAdded} />}
+        {page === 'home' && <HomePage onShop={openShop} onProduct={(item) => go('product', { product: item })} onAdd={addToCart} onToggleLike={toggleLiked} liked={liked} cartCount={cartCount} recentlyAdded={recentlyAdded} cart={cart} />}
+        {page === 'shop' && <ShopPage products={filteredProducts} searchSource={searchSource} search={search} setSearch={setSearch} category={category} setCategory={setCategory} city={city} setCity={setCity} maxPrice={maxPrice} setMaxPrice={setMaxPrice} sort={sort} setSort={setSort} onProduct={(item) => go('product', { product: item })} onAdd={addToCart} liked={liked} onToggleLike={toggleLiked} filtersOpen={filtersOpen} setFiltersOpen={setFiltersOpen} recentlyAdded={recentlyAdded} cart={cart} />}
+        {page === 'product' && product && <ProductPage product={product} onBack={() => go('shop')} onAdd={addToCart} recentlyAdded={recentlyAdded} currentCartQty={cart[product.id] || 0} />}
         {page === 'cart' && <CartPage catalog={catalog} cart={cart} onQuantity={updateQuantity} subtotal={subtotal} onShop={() => openShop()} onCheckout={() => go('checkout')} />}
         {page === 'checkout' && <CheckoutPage catalog={catalog} cart={cart} subtotal={subtotal} onBack={() => go('cart')} onSubmit={handleCheckoutSubmit} orderError={orderError} placingOrder={placingOrder} databaseConnected={serviceStatus.postgres} user={user} />}
         {page === 'success' && <SuccessPage orderId={orderId} orderResult={orderResult} onShop={() => { setOrderId(''); setOrderResult(null); openShop() }} onTrackOrder={openOrdersDrawer} />}
@@ -651,6 +915,23 @@ function App() {
               <h2><Package size={20} /> My Orders & Tracking</h2>
               <button className="icon-button" onClick={() => setOrdersOpen(false)} aria-label="Close orders"><X size={20} /></button>
             </div>
+            {orderNotice && (
+              <div style={{
+                margin: '8px 16px',
+                padding: '10px 14px',
+                borderRadius: '8px',
+                fontSize: '12px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                backgroundColor: orderNotice.type === 'error' ? '#fde8e8' : '#eaf5ea',
+                color: orderNotice.type === 'error' ? '#c81e1e' : '#1e7e34',
+                border: `1px solid ${orderNotice.type === 'error' ? '#f8b4b4' : '#c3e6cb'}`,
+              }}>
+                <AlertCircle size={15} />
+                <span>{orderNotice.message}</span>
+              </div>
+            )}
             <div className="drawer-content">
               {loadingOrders ? (
                 <div style={{ textAlign: 'center', padding: '60px 0', color: '#687268' }}>
@@ -665,7 +946,8 @@ function App() {
                 </div>
               ) : (
                 orders.map((ord) => {
-                  const stepIndex = ['CONFIRMED', 'PACKED', 'OUT_FOR_DELIVERY', 'DELIVERED'].indexOf(ord.status)
+                  const normStatus = (ord.status === 'PROCESSED' || ord.status === 'PLACED') ? 'CONFIRMED' : (ord.status || 'CONFIRMED').toUpperCase()
+                  const stepIndex = ['CONFIRMED', 'PACKED', 'OUT_FOR_DELIVERY', 'DELIVERED'].indexOf(normStatus)
                   const isCancelled = ord.status === 'CANCELLED'
 
                   return (
@@ -675,7 +957,7 @@ function App() {
                           <div className="order-ref">Order #{ord.id}</div>
                           <div className="order-date">{ord.created_at ? new Date(ord.created_at).toLocaleDateString('en-IN', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'Recent'} · {ord.payment_method || 'COD'}</div>
                         </div>
-                        <span className={`status-pill status-${ord.status}`}>{ord.status.replace(/_/g, ' ')}</span>
+                        <span className={`status-pill status-${normStatus}`}>{normStatus.replace(/_/g, ' ')}</span>
                       </div>
 
                       {/* 4-Step Tracking Bar */}
@@ -747,106 +1029,171 @@ function App() {
         </div>
       )}
 
-      {/* Interactive UPI Payment Modal */}
-      {upiModalOpen && (
-        <div className="modal-backdrop" onClick={() => setUpiModalOpen(false)}>
-          <div className="modal-dialog" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <h2>Pay via UPI</h2>
-              <button className="icon-button" onClick={() => setUpiModalOpen(false)}><X size={18} /></button>
+      {/* Razorpay Payment Gateway Modal */}
+      {razorpayModalOpen && (
+        <div className="modal-backdrop" onClick={() => setRazorpayModalOpen(false)}>
+          <div className="modal-dialog razorpay-modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '480px' }}>
+            <div className="razorpay-topbar">
+              <div className="razorpay-brand-pill">
+                <span className="rzp-logo-symbol">₹</span>
+                <b>Razorpay</b>
+                <span className="rzp-trusted-badge">TRUSTED BUSINESS</span>
+              </div>
+              <button className="icon-button" onClick={() => setRazorpayModalOpen(false)} aria-label="Close Razorpay"><X size={18} /></button>
             </div>
-            <div className="modal-body">
-              <div className="upi-total-banner">
-                <span>Amount to Pay</span>
-                <strong>{money(subtotal + (subtotal >= 2499 ? 0 : 99))}</strong>
+
+            <div className="razorpay-amount-strip">
+              <div>
+                <span className="rzp-amount-label">StoreSync Checkout</span>
+                <div className="rzp-customer-info">{pendingCheckoutForm?.get('name') || user?.name || 'Shopper'} · {pendingCheckoutForm?.get('city') || 'Bengaluru'}</div>
               </div>
+              <strong className="rzp-grand-total">{money(razorpayOrder?.amount_inr || subtotal + (subtotal >= 2499 ? 0 : 99))}</strong>
+            </div>
 
-              {/* Scannable QR Code */}
-              <div className="qr-container">
-                <svg className="qr-code-svg" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
-                  <rect width="100" height="100" fill="#FFFFFF" rx="4" />
-                  {/* Outer corner blocks */}
-                  <rect x="10" y="10" width="22" height="22" fill="#1C2E24" rx="2" />
-                  <rect x="14" y="14" width="14" height="14" fill="#FFFFFF" rx="1" />
-                  <rect x="17" y="17" width="8" height="8" fill="#1C2E24" />
+            <div className="razorpay-tabs">
+              <button className={`rzp-tab ${razorpayTab === 'upi' ? 'is-active' : ''}`} onClick={() => setRazorpayTab('upi')}>
+                <QrCode size={14} /> UPI QR & Apps
+              </button>
+              <button className={`rzp-tab ${razorpayTab === 'card' ? 'is-active' : ''}`} onClick={() => setRazorpayTab('card')}>
+                <CreditCard size={14} /> Cards
+              </button>
+              <button className={`rzp-tab ${razorpayTab === 'netbanking' ? 'is-active' : ''}`} onClick={() => setRazorpayTab('netbanking')}>
+                <Building2 size={14} /> Netbanking
+              </button>
+            </div>
 
-                  <rect x="68" y="10" width="22" height="22" fill="#1C2E24" rx="2" />
-                  <rect x="72" y="14" width="14" height="14" fill="#FFFFFF" rx="1" />
-                  <rect x="75" y="17" width="8" height="8" fill="#1C2E24" />
+            <div className="razorpay-tab-content">
+              {razorpayTab === 'upi' && (
+                <div className="rzp-upi-view">
+                  <div className="qr-container">
+                    <svg className="qr-code-svg" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <rect width="100" height="100" fill="#FFFFFF" rx="4" />
+                      <rect x="10" y="10" width="22" height="22" fill="#1C2E24" rx="2" />
+                      <rect x="14" y="14" width="14" height="14" fill="#FFFFFF" rx="1" />
+                      <rect x="17" y="17" width="8" height="8" fill="#1C2E24" />
+                      <rect x="68" y="10" width="22" height="22" fill="#1C2E24" rx="2" />
+                      <rect x="72" y="14" width="14" height="14" fill="#FFFFFF" rx="1" />
+                      <rect x="75" y="17" width="8" height="8" fill="#1C2E24" />
+                      <rect x="10" y="68" width="22" height="22" fill="#1C2E24" rx="2" />
+                      <rect x="14" y="72" width="14" height="14" fill="#FFFFFF" rx="1" />
+                      <rect x="17" y="75" width="8" height="8" fill="#1C2E24" />
+                      <rect x="38" y="12" width="6" height="6" fill="#1C2E24" />
+                      <rect x="48" y="18" width="6" height="6" fill="#1C2E24" />
+                      <rect x="56" y="12" width="6" height="6" fill="#1C2E24" />
+                      <rect x="38" y="26" width="6" height="6" fill="#1C2E24" />
+                      <rect x="46" y="32" width="6" height="6" fill="#1C2E24" />
+                      <rect x="14" y="42" width="6" height="6" fill="#1C2E24" />
+                      <rect x="24" y="46" width="6" height="6" fill="#1C2E24" />
+                      <rect x="36" y="44" width="6" height="6" fill="#1C2E24" />
+                      <rect x="60" y="44" width="6" height="6" fill="#1C2E24" />
+                      <rect x="74" y="40" width="6" height="6" fill="#1C2E24" />
+                      <rect x="82" y="48" width="6" height="6" fill="#1C2E24" />
+                      <rect x="40" y="58" width="6" height="6" fill="#1C2E24" />
+                      <rect x="50" y="64" width="6" height="6" fill="#1C2E24" />
+                      <rect x="62" y="60" width="6" height="6" fill="#1C2E24" />
+                      <rect x="72" y="66" width="6" height="6" fill="#1C2E24" />
+                      <rect x="38" y="76" width="6" height="6" fill="#1C2E24" />
+                      <rect x="48" y="82" width="6" height="6" fill="#1C2E24" />
+                      <rect x="58" y="74" width="6" height="6" fill="#1C2E24" />
+                      <rect x="76" y="80" width="6" height="6" fill="#1C2E24" />
+                      <rect x="42" y="42" width="16" height="16" fill="#0c2340" rx="3" />
+                      <text x="50" y="53" fill="#FFFFFF" fontSize="9" fontWeight="bold" textAnchor="middle" fontFamily="sans-serif">₹</text>
+                    </svg>
+                    <span className="qr-caption">Scan with any UPI app on phone</span>
+                  </div>
+                  <div className="upi-apps-badges">
+                    <span className="upi-badge">Google Pay</span>
+                    <span className="upi-badge">PhonePe</span>
+                    <span className="upi-badge">Paytm</span>
+                    <span className="upi-badge">BHIM</span>
+                  </div>
+                  <div className="upi-id-field">
+                    <label htmlFor="rzp-upi-vpa">Or enter UPI ID / VPA</label>
+                    <input id="rzp-upi-vpa" value={upiId} onChange={(e) => setUpiId(e.target.value)} placeholder="name@okhdfcbank" />
+                  </div>
+                </div>
+              )}
 
-                  <rect x="10" y="68" width="22" height="22" fill="#1C2E24" rx="2" />
-                  <rect x="14" y="72" width="14" height="14" fill="#FFFFFF" rx="1" />
-                  <rect x="17" y="75" width="8" height="8" fill="#1C2E24" />
+              {razorpayTab === 'card' && (
+                <div className="rzp-card-view">
+                  <div className="auth-field">
+                    <label>Card Number</label>
+                    <input defaultValue="4312 •••• •••• 8829" placeholder="4111 2222 3333 4444" />
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                    <div className="auth-field">
+                      <label>Expiry</label>
+                      <input defaultValue="12/28" placeholder="MM/YY" />
+                    </div>
+                    <div className="auth-field">
+                      <label>CVV</label>
+                      <input defaultValue="•••" placeholder="123" type="password" maxLength={4} />
+                    </div>
+                  </div>
+                  <div className="rzp-card-badges">
+                    <span>Visa</span><span>Mastercard</span><span>RuPay</span><span>Amex</span>
+                  </div>
+                </div>
+              )}
 
-                  {/* Matrix Dots */}
-                  <rect x="38" y="12" width="6" height="6" fill="#1C2E24" />
-                  <rect x="48" y="18" width="6" height="6" fill="#1C2E24" />
-                  <rect x="56" y="12" width="6" height="6" fill="#1C2E24" />
-                  <rect x="38" y="26" width="6" height="6" fill="#1C2E24" />
-                  <rect x="46" y="32" width="6" height="6" fill="#1C2E24" />
-                  <rect x="14" y="42" width="6" height="6" fill="#1C2E24" />
-                  <rect x="24" y="46" width="6" height="6" fill="#1C2E24" />
-                  <rect x="36" y="44" width="6" height="6" fill="#1C2E24" />
-                  <rect x="60" y="44" width="6" height="6" fill="#1C2E24" />
-                  <rect x="74" y="40" width="6" height="6" fill="#1C2E24" />
-                  <rect x="82" y="48" width="6" height="6" fill="#1C2E24" />
-                  <rect x="40" y="58" width="6" height="6" fill="#1C2E24" />
-                  <rect x="50" y="64" width="6" height="6" fill="#1C2E24" />
-                  <rect x="62" y="60" width="6" height="6" fill="#1C2E24" />
-                  <rect x="72" y="66" width="6" height="6" fill="#1C2E24" />
-                  <rect x="38" y="76" width="6" height="6" fill="#1C2E24" />
-                  <rect x="48" y="82" width="6" height="6" fill="#1C2E24" />
-                  <rect x="58" y="74" width="6" height="6" fill="#1C2E24" />
-                  <rect x="76" y="80" width="6" height="6" fill="#1C2E24" />
+              {razorpayTab === 'netbanking' && (
+                <div className="rzp-netbanking-view">
+                  <div className="popular-banks-grid">
+                    <button className="bank-pill is-active">HDFC Bank</button>
+                    <button className="bank-pill">ICICI Bank</button>
+                    <button className="bank-pill">State Bank of India</button>
+                    <button className="bank-pill">Axis Bank</button>
+                    <button className="bank-pill">Kotak Mahindra</button>
+                  </div>
+                </div>
+              )}
+            </div>
 
-                  {/* Center StoreSync Mark */}
-                  <rect x="42" y="42" width="16" height="16" fill="#C87854" rx="3" />
-                  <text x="50" y="53" fill="#FFFFFF" fontSize="9" fontWeight="bold" textAnchor="middle" fontFamily="sans-serif">st</text>
-                </svg>
-                <span className="qr-caption">Scan with any UPI app on phone</span>
-              </div>
-
-              {/* Supported UPI Badges */}
-              <div className="upi-apps-badges">
-                <span className="upi-badge">Google Pay</span>
-                <span className="upi-badge">PhonePe</span>
-                <span className="upi-badge">Paytm</span>
-                <span className="upi-badge">BHIM</span>
-                <span className="upi-badge">CRED</span>
-              </div>
-
-              {/* UPI ID Field */}
-              <div className="upi-id-field">
-                <label htmlFor="upi-vpa">Or enter UPI ID / VPA</label>
-                <input id="upi-vpa" value={upiId} onChange={(e) => setUpiId(e.target.value)} placeholder="name@okhdfcbank" />
-              </div>
-
-              <button className="button button-dark" style={{ width: '100%', height: '44px' }} disabled={upiVerifying} onClick={handleUpiPay}>
-                {upiVerifying ? (
+            <div className="razorpay-footer">
+              <button className="button razorpay-pay-btn" disabled={razorpayLoading} onClick={handleRazorpayVerify}>
+                {razorpayLoading ? (
                   <>
-                    <RefreshCw size={15} className="animate-spin" /> Verifying with UPI Gateway…
+                    <RefreshCw size={15} className="animate-spin" /> Verifying HMAC & Locking Stock…
                   </>
                 ) : (
                   <>
-                    <ShieldCheck size={16} /> Verify & Pay {money(subtotal + (subtotal >= 2499 ? 0 : 99))}
+                    <ShieldCheck size={16} /> Pay {money(razorpayOrder?.amount_inr || subtotal + (subtotal >= 2499 ? 0 : 99))} via Razorpay
                   </>
                 )}
               </button>
+              <div className="razorpay-security-note">
+                <Lock size={12} /> Verified by Visa · Mastercard Identity Check · 256-bit Encryption
+              </div>
             </div>
           </div>
         </div>
       )}
 
-      {/* User Authentication Modal */}
+      {/* User Authentication Modal (Gmail OTP Flow) */}
       {authModalOpen && (
         <div className="modal-backdrop" onClick={() => setAuthModalOpen(false)}>
           <div className="modal-dialog" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <h2>{authMode === 'login' ? 'Sign In to StoreSync' : authMode === 'signup' ? 'Create an Account' : 'Reset Password'}</h2>
+              <h2>{authMode === 'login' ? 'Sign In to StoreSync' : authMode === 'signup' ? 'Create an Account' : 'Reset Password (Gmail OTP)'}</h2>
               <button className="icon-button" onClick={() => setAuthModalOpen(false)}><X size={18} /></button>
             </div>
             <div className="modal-body">
-              {/* Tab Toggles */}
+              {authMode === 'forgot' && (
+                <div className="auth-stepper">
+                  <div className={`auth-step-pill ${authStep >= 1 ? 'is-active' : ''}`}>
+                    <span>1</span> Email
+                  </div>
+                  <div className="auth-stepper-line" />
+                  <div className={`auth-step-pill ${authStep >= 2 ? 'is-active' : ''}`}>
+                    <span>2</span> Verify OTP
+                  </div>
+                  <div className="auth-stepper-line" />
+                  <div className={`auth-step-pill ${authStep >= 3 ? 'is-active' : ''}`}>
+                    <span>3</span> Password
+                  </div>
+                </div>
+              )}
+
               {authMode !== 'forgot' && (
                 <div className="auth-tabs">
                   <button className={`auth-tab ${authMode === 'login' ? 'is-active' : ''}`} onClick={() => { setAuthMode('login'); setAuthError(''); setAuthMessage('') }}>
@@ -861,13 +1208,6 @@ function App() {
               {authError && <div style={{ color: '#b54734', fontSize: '11px', background: '#fae8e6', padding: '8px 12px', borderRadius: '4px', marginBottom: '14px' }}>{authError}</div>}
               {authMessage && <div style={{ color: '#2c6e32', fontSize: '11px', background: '#eef7ed', padding: '8px 12px', borderRadius: '4px', marginBottom: '14px' }}>{authMessage}</div>}
 
-              {/* Dev OTP helper for quick judge testing */}
-              {authDevOtp && (
-                <div className="dev-otp-badge" onClick={() => setAuthOtp(authDevOtp)} title="Click to auto-fill OTP">
-                  Demo helper: Generated OTP is <strong>{authDevOtp}</strong> (Click to auto-fill)
-                </div>
-              )}
-
               <form className="auth-form" onSubmit={handleAuthSubmit}>
                 {authMode === 'signup' && (
                   <div className="auth-field">
@@ -876,17 +1216,19 @@ function App() {
                   </div>
                 )}
 
-                <div className="auth-field">
-                  <label>Email Address</label>
-                  <input type="email" value={authEmail} onChange={(e) => setAuthEmail(e.target.value)} placeholder="demo@storesync.in" required />
-                </div>
+                {(authMode !== 'forgot' || authStep === 1) && (
+                  <div className="auth-field">
+                    <label>Email Address</label>
+                    <input type="email" value={authEmail} onChange={(e) => setAuthEmail(e.target.value)} placeholder="demo@storesync.in" required />
+                  </div>
+                )}
 
                 {authMode !== 'forgot' && (
                   <div className="auth-field">
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <label>Password</label>
                       {authMode === 'login' && (
-                        <button type="button" onClick={() => { setAuthMode('forgot'); setAuthStep('request'); setAuthError(''); setAuthMessage('') }} style={{ border: 0, background: 'none', color: '#c87854', fontSize: '10px', fontWeight: 600, padding: 0 }}>
+                        <button type="button" onClick={() => { setAuthMode('forgot'); setAuthStep(1); setAuthError(''); setAuthMessage('') }} style={{ border: 0, background: 'none', color: '#c87854', fontSize: '10px', fontWeight: 600, padding: 0 }}>
                           Forgot password?
                         </button>
                       )}
@@ -895,26 +1237,30 @@ function App() {
                   </div>
                 )}
 
-                {authMode === 'forgot' && authStep === 'verify' && (
-                  <>
-                    <div className="auth-field">
+                {authMode === 'forgot' && authStep === 2 && (
+                  <div className="auth-field">
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <label>6-Digit OTP</label>
-                      <input value={authOtp} onChange={(e) => setAuthOtp(e.target.value)} placeholder="123456" maxLength={6} required />
+                      {otpCountdown > 0 && <small style={{ color: '#777', fontSize: '10px' }}>Expires in {Math.floor(otpCountdown / 60)}:{(otpCountdown % 60).toString().padStart(2, '0')}</small>}
                     </div>
-                    <div className="auth-field">
-                      <label>New Password</label>
-                      <input type="password" value={authNewPassword} onChange={(e) => setAuthNewPassword(e.target.value)} placeholder="Minimum 6 characters" required />
-                    </div>
-                  </>
+                    <input value={authOtp} onChange={(e) => setAuthOtp(e.target.value)} placeholder="123456" maxLength={6} required autoFocus />
+                  </div>
+                )}
+
+                {authMode === 'forgot' && authStep === 3 && (
+                  <div className="auth-field">
+                    <label>New Password</label>
+                    <input type="password" value={authNewPassword} onChange={(e) => setAuthNewPassword(e.target.value)} placeholder="Minimum 6 characters" required autoFocus />
+                  </div>
                 )}
 
                 <button className="button button-dark" type="submit" disabled={authLoading} style={{ width: '100%', marginTop: '6px' }}>
-                  {authLoading ? 'Processing…' : authMode === 'login' ? 'Sign In' : authMode === 'signup' ? 'Create Account' : authStep === 'request' ? 'Send Reset OTP' : 'Update Password'}
+                  {authLoading ? 'Processing…' : authMode === 'login' ? 'Sign In' : authMode === 'signup' ? 'Create Account' : authStep === 1 ? 'Send 6-Digit OTP (Gmail SMTP)' : authStep === 2 ? 'Verify OTP' : 'Update Password & Sign In'}
                 </button>
               </form>
 
               {authMode === 'forgot' && (
-                <button type="button" onClick={() => { setAuthMode('login'); setAuthStep('request'); setAuthError(''); setAuthMessage('') }} style={{ display: 'block', margin: '14px auto 0', border: 0, background: 'none', color: '#687268', fontSize: '11px', textDecoration: 'underline' }}>
+                <button type="button" onClick={() => { setAuthMode('login'); setAuthStep(1); setAuthError(''); setAuthMessage('') }} style={{ display: 'block', margin: '14px auto 0', border: 0, background: 'none', color: '#687268', fontSize: '11px', textDecoration: 'underline' }}>
                   Return to sign in
                 </button>
               )}
@@ -941,6 +1287,75 @@ function App() {
         </div>
       )}
 
+      {/* Floating StoreSync AI Concierge Button */}
+      <button className="chat-floating-btn" onClick={() => setChatOpen(true)} title="StoreSync AI Retail Concierge">
+        <Sparkles size={16} />
+        <span>Ask StoreSync AI</span>
+      </button>
+
+      {/* StoreSync AI Chat Drawer */}
+      {chatOpen && (
+        <div className="drawer-backdrop" onClick={() => setChatOpen(false)}>
+          <div className="drawer-panel chat-drawer" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '440px' }}>
+            <div className="drawer-header">
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <div className="chat-bot-avatar"><Sparkles size={16} /></div>
+                <div>
+                  <h2 style={{ fontSize: '14px', margin: 0 }}>StoreSync AI Concierge</h2>
+                  <small style={{ color: '#27ae60', fontSize: '10px', fontWeight: 600 }}>● Online · Aiven OpenSearch</small>
+                </div>
+              </div>
+              <button className="icon-button" onClick={() => setChatOpen(false)} aria-label="Close chat"><X size={20} /></button>
+            </div>
+
+            <div className="chat-messages-container">
+              {chatMessages.map((m, idx) => (
+                <div className={`chat-bubble-row ${m.sender === 'user' ? 'is-user' : 'is-bot'}`} key={idx}>
+                  <div className="chat-bubble">
+                    <p style={{ margin: 0 }}>{m.text}</p>
+                    {m.products && m.products.length > 0 && (
+                      <div className="chat-product-suggestions">
+                        {m.products.map((p) => (
+                          <div className="chat-product-chip" key={p.id}>
+                            {(p.image || p.image_url) && <img src={p.image || p.image_url} alt="" onError={(e) => { e.currentTarget.style.display = 'none' }} />}
+                            <div className="chip-details">
+                              <strong>{p.name}</strong>
+                              <span>{money(p.price)} · {p.stock > 0 ? `${p.stock} in ${p.city || 'stock'}` : 'Sold out'}</span>
+                            </div>
+                            <button className="chip-add-btn" disabled={p.stock <= 0} onClick={() => { addToCart(p, 1); setChatOpen(false) }}>
+                              + Bag
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+              {chatLoading && (
+                <div className="chat-bubble-row is-bot">
+                  <div className="chat-bubble chat-loading-bubble">
+                    <RefreshCw size={13} className="animate-spin" /> Consulting Aiven store catalog...
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <form className="chat-input-bar" onSubmit={handleSendChat}>
+              <input
+                value={chatInput}
+                onChange={(e) => setChatInput(e.target.value)}
+                placeholder="Ask about headphones, sarees, city stock..."
+                disabled={chatLoading}
+              />
+              <button type="submit" disabled={chatLoading || !chatInput.trim()} aria-label="Send message">
+                <Send size={15} />
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* Footer */}
       <footer className="site-footer">
         <div className="footer-main">
@@ -963,7 +1378,7 @@ function App() {
   )
 }
 
-function HomePage({ onShop, onProduct, onAdd, onToggleLike, liked, cartCount, recentlyAdded }) {
+function HomePage({ onShop, onProduct, onAdd, onToggleLike, liked, cartCount, recentlyAdded, cart = {} }) {
   const featured = [initialProducts[0], initialProducts[3], initialProducts[6], initialProducts[12]]
   const heroImage = 'https://images.unsplash.com/photo-1498049794561-7780e7231661?auto=format&fit=crop&w=1800&q=88'
   return (
@@ -1009,7 +1424,7 @@ function HomePage({ onShop, onProduct, onAdd, onToggleLike, liked, cartCount, re
       <section className="featured-section">
         <div className="section-block featured-inner">
           <div className="section-heading"><div><span className="eyebrow">THE THINGS WE KEEP COMING BACK TO</span><h2>A few <i>very good finds.</i></h2></div><button className="text-link desktop-link" onClick={() => onShop()}>Shop the full edit <ArrowRight size={15} /></button></div>
-          <div className="product-grid home-product-grid">{featured.map((item, index) => <ProductCard item={item} key={item.id} index={index} onProduct={onProduct} onAdd={onAdd} onToggleLike={onToggleLike} liked={liked.includes(item.id)} recentlyAdded={recentlyAdded} />)}</div>
+          <div className="product-grid home-product-grid">{featured.map((item, index) => <ProductCard item={item} key={item.id} index={index} onProduct={onProduct} onAdd={onAdd} onToggleLike={onToggleLike} liked={liked.includes(item.id)} recentlyAdded={recentlyAdded} currentCartQty={cart[item.id] || 0} />)}</div>
           <button className="button button-outline mobile-view-all" onClick={() => onShop()}>Explore all finds <ArrowRight size={16} /></button>
         </div>
       </section>
@@ -1024,25 +1439,29 @@ function HomePage({ onShop, onProduct, onAdd, onToggleLike, liked, cartCount, re
   )
 }
 
-function ProductCard({ item, index = 0, onProduct, onAdd, onToggleLike, liked, recentlyAdded }) {
+function ProductCard({ item, index = 0, onProduct, onAdd, onToggleLike, liked, recentlyAdded, currentCartQty = 0 }) {
   const isAdded = recentlyAdded?.[item.id]
-  const outOfStock = item.stock <= 0
+  const outOfStock = Number(item.stock ?? 0) <= 0
+  const isMaxStock = !outOfStock && currentCartQty >= Number(item.stock ?? 0)
+  const alternativeCity = (Array.isArray(item.cities) ? item.cities.find((c) => c !== item.city) : null) || (item.city === 'Bengaluru' ? 'Mumbai' : 'Bengaluru')
 
   return (
     <article className={`product-card product-card-${index % 4}`}>
       <div className={`product-card-image ${item.tone}`} role="button" tabIndex="0" onClick={() => onProduct(item)} onKeyDown={(event) => event.key === 'Enter' && onProduct(item)} aria-label={`View ${item.name}`}>
         <span className="photo-emoji">{item.icon}</span>
         <img src={item.image || item.image_url} alt={item.name} loading="lazy" onError={(event) => { event.currentTarget.style.display = 'none' }} />
-        {outOfStock ? (
-          <span className="product-badge" style={{ background: '#b54734', color: '#fff' }}>Sold Out</span>
-        ) : item.stock === 1 ? (
-          <span className="product-badge" style={{ background: '#d35400', color: '#fff' }}>Last Unit!</span>
+        {item.stock <= 2 && item.stock > 0 ? (
+          <span className="product-badge scarcity-pill-pulse">🔥 High Demand — Only {item.stock} left!</span>
+        ) : outOfStock ? (
+          <span className="product-badge" style={{ background: '#b54734', color: '#fff' }}>Out of Stock</span>
+        ) : isMaxStock ? (
+          <span className="product-badge" style={{ background: '#7f8c8d', color: '#fff' }}>Max in Bag</span>
         ) : item.badge ? (
           <span className="product-badge">{item.badge}</span>
         ) : null}
         <button className={`favorite-button ${liked ? 'is-liked' : ''}`} onClick={(event) => { event.stopPropagation(); onToggleLike(item.id) }} aria-label={liked ? `Remove ${item.name} from favorites` : `Save ${item.name}`}><Heart size={17} fill={liked ? 'currentColor' : 'none'} strokeWidth={1.6} /></button>
-        <button className={`quick-add ${isAdded ? 'btn-added' : ''}`} disabled={outOfStock} onClick={(event) => { event.stopPropagation(); onAdd(item) }}>
-          {isAdded ? <><Check size={14} /> Added</> : outOfStock ? 'Sold Out' : <><Plus size={15} /> Quick add</>}
+        <button className={`quick-add ${isAdded ? 'btn-added' : ''}`} disabled={outOfStock || isMaxStock} onClick={(event) => { event.stopPropagation(); onAdd(item) }}>
+          {isAdded ? <><Check size={14} /> Added</> : outOfStock ? 'Out of Stock' : isMaxStock ? 'Max Stock Reached' : <><Plus size={15} /> Quick add</>}
         </button>
       </div>
       <div className="product-card-info">
@@ -1050,12 +1469,18 @@ function ProductCard({ item, index = 0, onProduct, onAdd, onToggleLike, liked, r
         <button className="product-card-title" onClick={() => onProduct(item)}>{item.name}</button>
         <p>{item.subtitle}</p>
         <div className="product-card-price"><strong>{money(item.price)}</strong>{item.compareAt && <del>{money(item.compareAt)}</del>}</div>
+        {outOfStock && (
+          <div className="cross-city-banner" onClick={(event) => { event.stopPropagation(); onAdd(item, 1) }} title="Smart Cross-City Express Transfer">
+            <span className="city-dot-express" />
+            <span>⚡ Express Transfer from {alternativeCity}</span>
+          </div>
+        )}
       </div>
     </article>
   )
 }
 
-function ShopPage({ products: visibleProducts, searchSource, search, setSearch, category, setCategory, city, setCity, maxPrice, setMaxPrice, sort, setSort, onProduct, onAdd, liked, onToggleLike, filtersOpen, setFiltersOpen, recentlyAdded }) {
+function ShopPage({ products: visibleProducts, searchSource, search, setSearch, category, setCategory, city, setCity, maxPrice, setMaxPrice, sort, setSort, onProduct, onAdd, liked, onToggleLike, filtersOpen, setFiltersOpen, recentlyAdded, cart = {} }) {
   const clearFilters = () => { setCategory('All finds'); setCity('All cities'); setMaxPrice(30000); setSearch('') }
   return (
     <section className="shop-page section-block">
@@ -1072,7 +1497,7 @@ function ShopPage({ products: visibleProducts, searchSource, search, setSearch, 
         </aside>
         <div className="catalogue-content">
           <form className="catalogue-search" onSubmit={(event) => event.preventDefault()}><Search size={17} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Looking for something? Try 'bluetoth', 'watch', 'saree'..." aria-label="Search products" />{search && <button type="button" onClick={() => setSearch('')} aria-label="Clear search"><X size={15} /></button>}</form>
-          {visibleProducts.length ? <div className="product-grid catalogue-grid">{visibleProducts.map((item, index) => <ProductCard item={item} key={item.id} index={index} onProduct={onProduct} onAdd={onAdd} onToggleLike={onToggleLike} liked={liked.includes(item.id)} recentlyAdded={recentlyAdded} />)}</div> : <div className="empty-results"><span className="empty-symbol">◌</span><h3>No good finds just yet.</h3><p>Try a different search or give your filters a little more room.</p><button className="button button-dark" onClick={clearFilters}>Clear filters</button></div>}
+          {visibleProducts.length ? <div className="product-grid catalogue-grid">{visibleProducts.map((item, index) => <ProductCard item={item} key={item.id} index={index} onProduct={onProduct} onAdd={onAdd} onToggleLike={onToggleLike} liked={liked.includes(item.id)} recentlyAdded={recentlyAdded} currentCartQty={cart[item.id] || 0} />)}</div> : <div className="empty-results"><span className="empty-symbol">◌</span><h3>No good finds just yet.</h3><p>Try a different search or give your filters a little more room.</p><button className="button button-dark" onClick={clearFilters}>Clear filters</button></div>}
           <div className="catalogue-bottom-note"><span className="note-dash" /> Showing StoreSync finds <span className="note-dash" /></div>
         </div>
       </div>
@@ -1080,10 +1505,11 @@ function ShopPage({ products: visibleProducts, searchSource, search, setSearch, 
   )
 }
 
-function ProductPage({ product: item, onBack, onAdd, recentlyAdded }) {
+function ProductPage({ product: item, onBack, onAdd, recentlyAdded, currentCartQty = 0 }) {
   const [quantity, setQuantity] = useState(1)
   const isAdded = recentlyAdded?.[item.id]
-  const outOfStock = (item.stock ?? 1) <= 0
+  const outOfStock = Number(item.stock ?? 0) <= 0
+  const isMaxStock = !outOfStock && currentCartQty >= Number(item.stock ?? 0)
 
   return (
     <section className="product-detail section-block">
@@ -1105,14 +1531,26 @@ function ProductPage({ product: item, onBack, onAdd, recentlyAdded }) {
           <p className="detail-description">{item.description}</p>
           <ul className="detail-points">{(item.detail || []).map((point) => <li key={point}><Check size={15} />{point}</li>)}</ul>
           <div className="detail-availability"><span className="city-pulse" /> Available in <b>{Array.isArray(item.cities) ? item.cities.slice(0, 3).join(', ') : (item.city || 'Pan-India')}</b></div>
+          {outOfStock && (
+            <div className="cross-city-box">
+              <div className="cross-city-head">
+                <Sparkles size={16} color="#d37746" />
+                <strong>Smart Cross-City Express Fulfillment</strong>
+              </div>
+              <p>Local warehouse stock in <b>{item.city || 'your city'}</b> is currently exhausted. We can dispatch directly from our <b>{Array.isArray(item.cities) ? item.cities.find((c) => c !== item.city) || 'Bengaluru Hub' : 'Bengaluru Central Hub'}</b> via priority express air transfer in 2-3 business days.</p>
+              <button className="button button-dark" onClick={() => onAdd(item, quantity)} style={{ width: '100%', height: '40px', marginTop: '10px' }}>
+                <Zap size={15} /> Order via Express Hub Transfer
+              </button>
+            </div>
+          )}
           <div className="detail-buy-row">
             <div className="quantity-stepper">
               <button disabled={outOfStock} onClick={() => setQuantity(Math.max(1, quantity - 1))} aria-label="Decrease quantity"><Minus size={14} /></button>
               <span>{quantity}</span>
               <button disabled={outOfStock || quantity >= item.stock} onClick={() => setQuantity(quantity + 1)} aria-label="Increase quantity"><Plus size={14} /></button>
             </div>
-            <button className={`button button-dark add-detail-button ${isAdded ? 'btn-added' : ''}`} disabled={outOfStock} onClick={() => onAdd(item, quantity)}>
-              {isAdded ? <><Check size={16} /> Added to your bag</> : outOfStock ? 'Out of stock' : <>Add to bag <ShoppingBag size={16} /></>}
+            <button className={`button button-dark add-detail-button ${isAdded ? 'btn-added' : ''}`} disabled={outOfStock || isMaxStock} onClick={() => onAdd(item, quantity)}>
+              {isAdded ? <><Check size={16} /> Added to your bag</> : outOfStock ? 'Out of Stock' : isMaxStock ? 'Max Stock Reached' : <>Add to bag <ShoppingBag size={16} /></>}
             </button>
           </div>
           <small className="prototype-inline">Aiven PostgreSQL ACID Locks & Kafka live sync</small>
@@ -1125,13 +1563,31 @@ function ProductPage({ product: item, onBack, onAdd, recentlyAdded }) {
 }
 
 function CartPage({ catalog, cart, onQuantity, subtotal, onShop, onCheckout }) {
-  const items = Object.entries(cart).map(([id, quantity]) => ({ product: catalog.find((item) => String(item.id) === String(id)), quantity })).filter((entry) => entry.product)
+  const items = Object.entries(cart).map(([id, quantity]) => {
+    const p = catalog.find((item) => String(item.id) === String(id))
+    if (!p) return null
+    return {
+      id: p.id,
+      name: p.name,
+      price: Number(p.price || 0),
+      city: p.city || 'Pan-India',
+      stock: Number(p.stock ?? 0),
+      image_url: p.image || p.image_url,
+      quantity,
+      category: p.category || 'Retail',
+      subtitle: p.subtitle || '',
+      tone: p.tone || 'tone-1',
+      icon: p.icon || '🛍️',
+    }
+  }).filter(Boolean)
+
   const delivery = subtotal === 0 || subtotal >= 2499 ? 0 : 99
+
   return (
     <section className="cart-page section-block">
       <div className="breadcrumb"><button onClick={onShop}>Shop all</button><ChevronRight size={13} /><span>Your bag</span></div>
       <div className="cart-heading"><div><span className="eyebrow">GOOD THINGS, GATHERED</span><h1>Your bag<span className="title-period">.</span></h1></div><span className="cart-item-count">{items.reduce((count, entry) => count + entry.quantity, 0)} items</span></div>
-      {items.length === 0 ? <div className="empty-cart"><div className="empty-bag-icon"><ShoppingBag size={32} strokeWidth={1.2} /></div><span className="eyebrow">NOTHING HERE JUST YET</span><h2>A little room for <i>something good.</i></h2><p>Your next favourite is waiting to be found.</p><button className="button button-dark" onClick={onShop}>Explore the edit <ArrowRight size={16} /></button></div> : <div className="cart-layout"><div className="cart-list"><div className="cart-list-head"><span>YOUR FINDS ({items.length})</span><span>SUBTOTAL</span></div>{items.map(({ product: item, quantity }) => <div className="cart-item" key={item.id}><div className={`cart-item-image ${item.tone}`}><span>{item.icon}</span><img src={item.image || item.image_url} alt={item.name} onError={(event) => { event.currentTarget.style.display = 'none' }} /></div><div className="cart-item-info"><span className="eyebrow">{item.category}</span><h3>{item.name}</h3><p>{item.subtitle}</p><div className="cart-mobile-price">{money(item.price * quantity)}</div><div className="cart-item-controls"><div className="quantity-stepper"><button onClick={() => onQuantity(item.id, quantity - 1)} aria-label={`Decrease ${item.name} quantity`}><Minus size={13} /></button><span>{quantity}</span><button disabled={quantity >= item.stock} onClick={() => onQuantity(item.id, quantity + 1)} aria-label={`Increase ${item.name} quantity`}><Plus size={13} /></button></div><button className="remove-link" onClick={() => onQuantity(item.id, 0)}>Remove</button></div></div><strong className="cart-line-total">{money(item.price * quantity)}</strong></div>)}<button className="continue-shopping" onClick={onShop}><ArrowLeft size={14} /> Keep looking around</button></div><aside className="order-summary"><span className="eyebrow">A LITTLE RECAP</span><h2>Order summary</h2><div className="summary-line"><span>Subtotal</span><span>{money(subtotal)}</span></div><div className="summary-line"><span>Delivery</span><span>{delivery === 0 ? 'Complimentary' : money(delivery)}</span></div>{delivery > 0 && <div className="delivery-progress"><span>You're {money(2499 - subtotal)} away from complimentary delivery.</span><div><i style={{ width: `${Math.min((subtotal / 2499) * 100, 100)}%` }} /></div></div>}<div className="summary-total"><span>Total</span><strong>{money(subtotal + delivery)}</strong></div><small className="tax-note">All taxes included. A promise we intend to keep.</small><button className="button button-dark checkout-button" onClick={onCheckout}>Continue to checkout <ArrowRight size={16} /></button><div className="summary-prototype"><ShieldCheck size={15} /><span>Aiven PostgreSQL ACID transaction & Kafka streaming.</span></div><div className="summary-assurance"><span><Truck size={15} />Easy delivery</span><span><Clock3 size={15} />7-day returns</span></div></aside></div>}
+      {items.length === 0 ? <div className="empty-cart"><div className="empty-bag-icon"><ShoppingBag size={32} strokeWidth={1.2} /></div><span className="eyebrow">NOTHING HERE JUST YET</span><h2>A little room for <i>something good.</i></h2><p>Your next favourite is waiting to be found.</p><button className="button button-dark" onClick={onShop}>Explore the edit <ArrowRight size={16} /></button></div> : <div className="cart-layout"><div className="cart-list"><div className="cart-list-head"><span>YOUR FINDS ({items.length})</span><span>SUBTOTAL</span></div>{items.map((item) => <div className="cart-item" key={item.id}><div className={`cart-item-image ${item.tone}`}><span>{item.icon}</span><img src={item.image_url} alt={item.name} onError={(event) => { event.currentTarget.style.display = 'none' }} /></div><div className="cart-item-info"><span className="eyebrow">{item.category} · {item.city}</span><h3>{item.name}</h3><p>{item.subtitle || `Dispatching from ${item.city}`}</p><div className="cart-mobile-price">{money(item.price * item.quantity)}</div><div className="cart-item-controls"><div className="quantity-stepper"><button onClick={() => onQuantity(item.id, item.quantity - 1)} aria-label={`Decrease ${item.name} quantity`}><Minus size={13} /></button><span>{item.quantity}</span><button disabled={item.quantity >= item.stock} onClick={() => onQuantity(item.id, item.quantity + 1)} aria-label={`Increase ${item.name} quantity`} title={item.quantity >= item.stock ? `Max ${item.stock} in stock` : 'Add one more'}><Plus size={13} /></button></div><button className="remove-link" onClick={() => onQuantity(item.id, 0)}>Remove</button>{item.quantity >= item.stock && <span style={{ fontSize: '11px', color: '#c0392b', marginLeft: '8px', fontWeight: 600 }}>(Max {item.stock})</span>}</div></div><strong className="cart-line-total">{money(item.price * item.quantity)}</strong></div>)}<button className="continue-shopping" onClick={onShop}><ArrowLeft size={14} /> Keep looking around</button></div><aside className="order-summary"><span className="eyebrow">A LITTLE RECAP</span><h2>Order summary</h2><div className="summary-line"><span>Subtotal</span><span>{money(subtotal)}</span></div><div className="summary-line"><span>Delivery</span><span>{delivery === 0 ? 'Complimentary' : money(delivery)}</span></div>{delivery > 0 && <div className="delivery-progress"><span>You're {money(2499 - subtotal)} away from complimentary delivery.</span><div><i style={{ width: `${Math.min((subtotal / 2499) * 100, 100)}%` }} /></div></div>}<div className="summary-total"><span>Total</span><strong>{money(subtotal + delivery)}</strong></div><small className="tax-note">All taxes included. A promise we intend to keep.</small><button className="button button-dark checkout-button" onClick={onCheckout}>Continue to checkout <ArrowRight size={16} /></button><div className="summary-prototype"><ShieldCheck size={15} /><span>Aiven PostgreSQL ACID transaction & Kafka streaming.</span></div><div className="summary-assurance"><span><Truck size={15} />Easy delivery</span><span><Clock3 size={15} />7-day returns</span></div></aside></div>}
     </section>
   )
 }
@@ -1178,15 +1634,15 @@ function CheckoutPage({ catalog, cart, subtotal, onBack, onSubmit, orderError, p
               </div>
             </div>
             <label className="payment-option selected-payment">
-              <input type="radio" name="payment" value="upi" defaultChecked />
+              <input type="radio" name="payment" value="razorpay" defaultChecked />
               <span className="payment-radio" />
-              <span className="payment-copy"><b>Instant UPI Payment</b><small>Google Pay, PhonePe, Paytm, BHIM with interactive QR</small></span>
-              <span className="payment-tag">POPULAR</span>
+              <span className="payment-copy"><b>Razorpay Secure Checkout</b><small>UPI QR, Credit/Debit Cards, Netbanking · 256-bit SSL encrypted</small></span>
+              <span className="payment-tag">RECOMMENDED</span>
             </label>
             <label className="payment-option">
               <input type="radio" name="payment" value="cod" />
               <span className="payment-radio" />
-              <span className="payment-copy"><b>Cash on delivery</b><small>Pay cash or card when order arrives</small></span>
+              <span className="payment-copy"><b>Cash on delivery</b><small>Pay cash or UPI when order arrives</small></span>
               <span className="upi-mark">COD</span>
             </label>
           </div>

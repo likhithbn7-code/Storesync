@@ -172,6 +172,12 @@ def start_consumer():
                             mark_order_status(pg_conn, order_id, "CANCELLED")
                         print(f"[SUCCESS] Processed ORDER_CANCELLED for Order #{order_id} -> Restored stock synced to OpenSearch.\n")
 
+                    elif event_type == "LOW_STOCK_ALERT":
+                        p_id = event.get("product_id")
+                        p_name = event.get("product_name")
+                        rem = event.get("remaining_stock")
+                        print(f"  🔥 [SCARCITY TRIGGER] Product #{p_id} ('{p_name}') critically low: {rem} left in Aiven PostgreSQL.\n")
+
         consumer.close()
         if pg_conn:
             pg_conn.close()
