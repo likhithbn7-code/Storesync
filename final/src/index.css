@@ -1,0 +1,19 @@
+@import url('https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=Red+Hat+Mono:wght@500;600&family=Wix+Madefor+Display:wght@600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg-surface: #FAF7F2;
+  --bg-forest: #1C2E24;
+  --color-terracotta: #C87854;
+}
+
+body {
+  margin: 0;
+  background-color: #FAF7F2;
+  color: #111827;
+  font-family: 'Instrument Sans', sans-serif;
+  -webkit-font-smoothing: antialiased;
+}

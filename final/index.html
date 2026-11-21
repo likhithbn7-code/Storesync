@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Storesync — Good finds, thoughtfully gathered.</title>
+    <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=Red+Hat+Mono:wght@500;600&family=Wix+Madefor+Display:wght@600;700&display=swap" rel="stylesheet" />
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              'forest': '#1C2E24',
+              'forest-dark': '#16251D',
+              'terracotta': '#C87854',
+              'sage': '#E9F0E8',
+              'blush': '#F7E9EA',
+              'slate-tint': '#E9EFF5',
+              'light-surface': '#FAF7F2',
+              'light-surface-container-low': '#F3ECE1',
+              'light-surface-container': '#EBE2D3',
+              'light-outline-variant': '#E4DACE',
+              'light-primary': '#4F46E5',
+              'light-primary-container': '#EEF2FF',
+              'light-on-primary-container': '#3730A3',
+            },
+            fontFamily: {
+              'display': ['"Wix Madefor Display"', 'sans-serif'],
+              'headline': ['"Wix Madefor Display"', 'sans-serif'],
+              'title': ['"Instrument Sans"', 'sans-serif'],
+              'body': ['"Instrument Sans"', 'sans-serif'],
+              'label': ['"Instrument Sans"', 'sans-serif'],
+              'mono': ['"Red Hat Mono"', 'monospace'],
+            }
+          }
+        }
+      }
+    </script>
+  </head>
+  <body class="bg-light-surface text-[#111827] font-body antialiased">
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
