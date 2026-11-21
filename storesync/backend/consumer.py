@@ -23,9 +23,37 @@ KAFKA_TOPIC = os.getenv("KAFKA_TOPIC", "order-events")
 KAFKA_GROUP_ID = os.getenv("KAFKA_GROUP_ID", "storesync-inventory-group")
 
 # SSL certificates for Aiven Kafka
-ca_file = os.path.join(backend_dir, "certs", "ca.pem")
-cert_file = os.path.join(backend_dir, "certs", "service.cert")
-key_file = os.path.join(backend_dir, "certs", "service.key")
+certs_dir = os.path.join(backend_dir, "certs")
+ca_file = os.path.join(certs_dir, "ca.pem")
+cert_file = os.path.join(certs_dir, "service.cert")
+key_file = os.path.join(certs_dir, "service.key")
+
+
+def ensure_kafka_certs():
+    """Recreates certs from environment variables if missing on disk."""
+    os.makedirs(certs_dir, exist_ok=True)
+    mapping = {
+        ca_file: os.getenv("KAFKA_CA_PEM"),
+        cert_file: os.getenv("KAFKA_SERVICE_CERT"),
+        key_file: os.getenv("KAFKA_SERVICE_KEY"),
+    }
+    recreated = []
+    for file_path, env_val in mapping.items():
+        if not os.path.exists(file_path) and env_val:
+            try:
+                content = env_val.strip()
+                if "\\n" in content and "\n" not in content:
+                    content = content.replace("\\n", "\n")
+                with open(file_path, "w", encoding="utf-8") as f:
+                    f.write(content + "\n")
+                recreated.append(os.path.basename(file_path))
+            except Exception as e:
+                print(f"[WARN] Failed to write certificate {file_path}: {e}")
+    if recreated:
+        print(f"[BOOT] Recreated Kafka SSL certs from environment variables: {', '.join(recreated)}")
+
+
+ensure_kafka_certs()
 
 running = True
 

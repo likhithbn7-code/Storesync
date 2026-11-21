@@ -28,7 +28,7 @@ button { color: inherit; }
 button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid #718270; outline-offset: 3px; }
 button { cursor: pointer; }
 img { display: block; max-width: 100%; }
-.app-shell { min-height: 100vh; overflow: clip; padding-bottom: 36px; }
+.app-shell { min-height: 100vh; overflow: clip   }
 
 .announcement { height: 32px; display: flex; justify-content: center; align-items: center; gap: 9px; background: #313e33; color: #f8f6ed; font-size: 10px; letter-spacing: .035em; }
 .announcement-stars { color: #dca881; font-size: 13px; }
@@ -1736,7 +1736,7 @@ img { display: block; max-width: 100%; }
 /* StoreSync AI Retail Concierge Styles */
 .chat-floating-btn {
   position: fixed;
-  bottom: 24px;
+  bottom: 34px;
   right: 24px;
   z-index: 40;
   display: flex;
@@ -1901,4 +1901,393 @@ img { display: block; max-width: 100%; }
 .chat-input-bar button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+/* ==========================================================================
+   StoreSync Hackathon UI Upgrades:
+   1. Live Multi-City Ticker & Hero Enhancements
+   2. Skeleton Loading Cards (Zero Layout Shift)
+   3. Quick View Modal
+   4. Fuzzy Search Chips & In-Stock Filter
+   5. Bag Slide-Over Drawer with Free Shipping Stepper
+   6. AI Concierge Starter Prompts & Markdown Formatting
+   ========================================================================== */
+
+/* 1. Hero Live Ticker & Smooth Scroll CTA */
+.hero-live-ticker {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  padding: 5px 12px;
+  border-radius: 20px;
+  font-size: 10px;
+  font-weight: 600;
+  color: #f7f5ed;
+  letter-spacing: 0.04em;
+  margin-bottom: 16px;
+}
+.hero-ticker-dot {
+  width: 7px;
+  height: 7px;
+  background: #2ecc71;
+  border-radius: 50%;
+  box-shadow: 0 0 0 3px rgba(46, 204, 113, 0.35);
+  animation: pulse-dot 2s infinite ease-in-out;
+}
+@keyframes pulse-dot {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.25); opacity: 0.7; }
+}
+.hero-cta-group {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.hero-deals-btn {
+  background: rgba(247, 245, 237, 0.15) !important;
+  color: #ffffff !important;
+  border: 1px solid rgba(255, 255, 255, 0.3) !important;
+}
+.hero-deals-btn:hover {
+  background: rgba(247, 245, 237, 0.28) !important;
+  border-color: rgba(255, 255, 255, 0.5) !important;
+}
+
+/* 2. Skeleton Loading Cards (Zero Layout Shift) */
+.skeleton-card {
+  background: #ffffff;
+  border: 1px solid #ebe8e1;
+  border-radius: 6px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.skeleton-image {
+  width: 100%;
+  aspect-ratio: 0.91 / 1;
+  background: linear-gradient(90deg, #edebe4 0%, #f7f6f2 50%, #edebe4 100%);
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.5s infinite;
+}
+.skeleton-info {
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.skeleton-line {
+  height: 12px;
+  border-radius: 4px;
+  background: linear-gradient(90deg, #ece9e1 0%, #f6f5f0 50%, #ece9e1 100%);
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.5s infinite;
+}
+.skeleton-line-category { width: 35%; height: 9px; }
+.skeleton-line-title { width: 85%; height: 14px; }
+.skeleton-line-sub { width: 60%; height: 10px; }
+.skeleton-line-price { width: 40%; height: 14px; margin-top: 4px; }
+@keyframes skeleton-shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+/* 3. Quick View Modal & Product Card Badges */
+.stock-dot-green {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  background: #27ae60;
+  border-radius: 50%;
+  margin-right: 4px;
+}
+.product-card-actions {
+  position: absolute;
+  z-index: 2;
+  left: 8px;
+  right: 8px;
+  bottom: 8px;
+  display: flex;
+  gap: 6px;
+  opacity: 0;
+  transform: translateY(6px);
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.product-card-image:hover .product-card-actions,
+.product-card-image:focus-within .product-card-actions {
+  opacity: 1;
+  transform: translateY(0);
+}
+.btn-quick-view {
+  flex: 0 0 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.95);
+  color: #242c23;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+  transition: all 0.15s ease;
+}
+.btn-quick-view:hover {
+  background: #ffffff;
+  color: #b97555;
+  transform: scale(1.05);
+}
+.product-card-actions .quick-add {
+  position: static;
+  flex: 1;
+  opacity: 1;
+  transform: none;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+  border-radius: 4px;
+}
+
+.quick-view-dialog {
+  max-width: 780px !important;
+  width: 92vw;
+  padding: 0 !important;
+  overflow: hidden;
+  border-radius: 8px;
+}
+.quick-view-body {
+  display: grid;
+  grid-template-columns: 1fr 1.1fr;
+}
+@media (max-width: 680px) {
+  .quick-view-body {
+    grid-template-columns: 1fr;
+  }
+}
+.quick-view-media {
+  position: relative;
+  background: #f0eee8;
+  display: grid;
+  place-items: center;
+  min-height: 300px;
+}
+.quick-view-media img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  max-height: 420px;
+}
+.quick-view-content {
+  padding: 28px 24px;
+  display: flex;
+  flex-direction: column;
+}
+.quick-view-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.quick-view-title {
+  font-family: var(--serif);
+  font-size: 20px;
+  font-weight: 700;
+  color: #242923;
+  margin: 6px 0 4px;
+  line-height: 1.25;
+}
+.quick-view-price-strip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 10px 0 14px;
+}
+.quick-view-price {
+  font-size: 18px;
+  font-weight: 700;
+  color: #253328;
+}
+.quick-view-stock-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 4px;
+}
+.quick-view-stock-tag.in-stock {
+  background: #eaf5ea;
+  color: #1e7e34;
+}
+.quick-view-stock-tag.scarcity {
+  background: #fdf3e8;
+  color: #d35400;
+}
+.quick-view-stock-tag.out {
+  background: #fde8e8;
+  color: #c0392b;
+}
+.quick-view-desc {
+  font-size: 12px;
+  line-height: 1.65;
+  color: #636b60;
+  margin: 0 0 16px;
+}
+.quick-view-specs {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 20px;
+}
+.quick-view-spec-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: #495449;
+}
+.quick-view-actions {
+  margin-top: auto;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+/* 4. Fuzzy Search Chips & In-Stock Filter */
+.fuzzy-search-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 4px 0 10px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.fuzzy-search-bar::-webkit-scrollbar {
+  display: none;
+}
+.fuzzy-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: #798275;
+  white-space: nowrap;
+  letter-spacing: 0.02em;
+}
+.fuzzy-chip {
+  border: 1px dashed #c8cfc4;
+  background: #fdfbf7;
+  color: #3b453a;
+  padding: 3px 9px;
+  border-radius: 14px;
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.fuzzy-chip:hover {
+  background: #344238;
+  color: #ffffff;
+  border-style: solid;
+  border-color: #344238;
+  transform: translateY(-1px);
+}
+.fuzzy-chip.active {
+  background: #344238;
+  color: #ffffff;
+  border-style: solid;
+  border-color: #344238;
+}
+
+.in-stock-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 20px;
+  border: 1px solid #dcd7cb;
+  background: #ffffff;
+  font-size: 11px;
+  font-weight: 600;
+  color: #4b5548;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.in-stock-toggle-btn:hover {
+  border-color: #8c9e89;
+}
+.in-stock-toggle-btn.is-active {
+  background: #eaf5ea;
+  border-color: #7cb382;
+  color: #1e7e34;
+}
+
+/* 5. Bag Slide-Over Drawer with Free Shipping Stepper */
+.bag-drawer-panel {
+  max-width: 440px !important;
+  display: flex;
+  flex-direction: column;
+}
+.bag-free-shipping-bar {
+  background: #fdfbf6;
+  border-bottom: 1px solid #eeebe2;
+  padding: 12px 18px;
+}
+.bag-shipping-caption {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+  font-weight: 600;
+  color: #374238;
+  margin-bottom: 6px;
+}
+.bag-shipping-track {
+  width: 100%;
+  height: 6px;
+  background: #eae6dd;
+  border-radius: 3px;
+  overflow: hidden;
+}
+.bag-shipping-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #c87854 0%, #27ae60 100%);
+  border-radius: 3px;
+  transition: width 0.35s ease;
+}
+
+/* 6. AI Concierge Starter Prompts & Markdown Formatting */
+.chat-starter-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0 4px;
+}
+.chat-starter-chip {
+  padding: 4px 10px;
+  background: #f0ede4;
+  color: #313d32;
+  border: 1px solid #ded9cb;
+  border-radius: 12px;
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.chat-starter-chip:hover {
+  background: #2b3b2f;
+  color: #ffffff;
+  border-color: #2b3b2f;
+}
+.chat-md-bullet {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 4px 0;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.chat-md-bullet-dot {
+  color: #c87854;
+  font-weight: 700;
+  flex-shrink: 0;
 }

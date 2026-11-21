@@ -20,7 +20,7 @@ const wordMatch = (product, query) => {
     .includes(needle)
 }
 
-const API_BASE = '' // Vite proxy forwards /api to http://localhost:5000
+const API_BASE = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '')
 
 export async function safeFetch(url, options = {}) {
   const targetUrl = url.startsWith('http') ? url : `${API_BASE}${url}`
@@ -35,8 +35,8 @@ export async function safeFetch(url, options = {}) {
     })
   } catch (err) {
     if (err?.name === 'AbortError') throw err
-    // If proxied fetch failed with a network error, attempt direct backend fetch
-    if (!targetUrl.startsWith('http://localhost:5000') && !targetUrl.startsWith('https://')) {
+    // If proxied fetch failed with a network error and API_BASE is empty (local dev), attempt direct backend fetch
+    if (!API_BASE && !targetUrl.startsWith('http://localhost:5000') && !targetUrl.startsWith('https://')) {
       try {
         res = await fetch(`http://localhost:5000${url}`, {
           ...options,
@@ -63,7 +63,7 @@ export async function safeFetch(url, options = {}) {
         status: 503,
         data: {
           error: 'BACKEND_OFFLINE',
-          message: 'StoreSync Flask backend is not running on port 5000. Start it via `python app.py`.',
+          message: 'StoreSync backend is not reachable. Please verify your backend server URL.',
         },
         text: '',
       }
@@ -205,10 +205,10 @@ function App() {
     let active = true
     safeFetch('/api/health')
       .then(({ ok, data }) => { if (active && ok && data?.services) setServiceStatus(data.services) })
-      .catch(() => {})
+      .catch(() => { })
     safeFetch('/api/products')
       .then(({ ok, data }) => { if (active && ok && Array.isArray(data?.products) && data.products.length) setCatalog(data.products) })
-      .catch(() => {})
+      .catch(() => { })
     return () => { active = false }
   }, [])
 
@@ -239,7 +239,7 @@ function App() {
             return changed ? next : prevCart
           })
         }
-      } catch {}
+      } catch { }
     }
     const timer = window.setInterval(fetchLiveStock, 3000)
     return () => { active = false; window.clearInterval(timer) }
@@ -280,7 +280,7 @@ function App() {
             eventStatus: data.order.status === 'PROCESSED' ? 'processed' : 'sent',
           }))
         }
-      } catch {}
+      } catch { }
     }
     void pollOrder()
     const timer = window.setInterval(pollOrder, 1000)
@@ -296,7 +296,7 @@ function App() {
       if (ok) {
         setOrders(data.orders || [])
       }
-    } catch {} finally {
+    } catch { } finally {
       setLoadingOrders(false)
     }
   }
@@ -480,7 +480,7 @@ function App() {
           if (sOk && sMap) {
             setCatalog((prev) => prev.map((p) => sMap[String(p.id)] !== undefined ? { ...p, stock: sMap[String(p.id)] } : p))
           }
-        } catch {}
+        } catch { }
         throw new Error(data?.message || 'Another shopper just bought the last unit!')
       }
 
@@ -583,7 +583,7 @@ function App() {
           if (sOk && sMap) {
             setCatalog((prev) => prev.map((p) => sMap[String(p.id)] !== undefined ? { ...p, stock: sMap[String(p.id)] } : p))
           }
-        } catch {}
+        } catch { }
         throw new Error(data?.message || 'Another shopper just bought the last unit!')
       }
 
@@ -1373,7 +1373,6 @@ function App() {
         </div>
         <div className="footer-bottom"><span>© 2026 StoreSync Studio</span><span className="footer-demo"><span className="demo-dot" />{serviceStatus.postgres ? 'Aiven PostgreSQL connected' : 'sample catalogue'} · {serviceStatus.kafka ? 'Kafka connected' : 'Kafka pending'} · {serviceStatus.opensearch ? 'OpenSearch connected' : 'OpenSearch pending'}</span><span>Made for everyday India <span className="heart-char">♥</span></span></div>
       </footer>
-      <div className="prototype-ribbon"><span className="demo-dot" /> Aiven PS1 · StoreSync <span>·</span> PostgreSQL ACID Locks · Apache Kafka Stream · OpenSearch Fuzzy Search</div>
     </div>
   )
 }

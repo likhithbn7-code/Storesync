@@ -7,6 +7,7 @@ import hmac
 import hashlib
 import uuid
 import smtplib
+import threading
 import requests
 from collections import deque
 from email.mime.text import MIMEText
@@ -18,7 +19,7 @@ from dotenv import load_dotenv
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from opensearchpy import OpenSearch
-from kafka import KafkaProducer
+from kafka import KafkaProducer, KafkaConsumer
 from kafka.errors import KafkaError
 from werkzeug.security import generate_password_hash, check_password_hash
 from itsdangerous import URLSafeTimedSerializer, SignatureExpired, BadSignature
@@ -74,9 +75,42 @@ lock_latencies.append({"order_id": "init_boot", "latency_ms": 9.4, "timestamp": 
 lock_latencies.append({"order_id": "seed_check", "latency_ms": 7.8, "timestamp": _boot_ts})
 
 # SSL certificates for Aiven Kafka
-ca_file = os.path.join(backend_dir, "certs", "ca.pem")
-cert_file = os.path.join(backend_dir, "certs", "service.cert")
-key_file = os.path.join(backend_dir, "certs", "service.key")
+certs_dir = os.path.join(backend_dir, "certs")
+ca_file = os.path.join(certs_dir, "ca.pem")
+cert_file = os.path.join(certs_dir, "service.cert")
+key_file = os.path.join(certs_dir, "service.key")
+
+
+def ensure_kafka_certs():
+    """
+    Startup helper that recreates certs/ca.pem, certs/service.cert, and certs/service.key
+    from KAFKA_CA_PEM, KAFKA_SERVICE_CERT, and KAFKA_SERVICE_KEY environment variables
+    if the files are missing on disk (critical for Render / Railway / cloud deployments).
+    """
+    os.makedirs(certs_dir, exist_ok=True)
+    mapping = {
+        ca_file: os.getenv("KAFKA_CA_PEM"),
+        cert_file: os.getenv("KAFKA_SERVICE_CERT"),
+        key_file: os.getenv("KAFKA_SERVICE_KEY"),
+    }
+    recreated = []
+    for file_path, env_val in mapping.items():
+        if not os.path.exists(file_path) and env_val:
+            try:
+                content = env_val.strip()
+                if "\\n" in content and "\n" not in content:
+                    content = content.replace("\\n", "\n")
+                with open(file_path, "w", encoding="utf-8") as f:
+                    f.write(content + "\n")
+                recreated.append(os.path.basename(file_path))
+            except Exception as e:
+                print(f"[WARN] Failed to write certificate {file_path}: {e}")
+    if recreated:
+        print(f"[BOOT] Recreated Kafka SSL certs from environment variables: {', '.join(recreated)}")
+
+
+# Ensure Kafka certificates are present on disk before service initialization
+ensure_kafka_certs()
 
 app = Flask(__name__)
 CORS(app, resources={r"/api/*": {"origins": "*"}}, supports_credentials=True)
@@ -243,6 +277,161 @@ def get_kafka_producer():
         except Exception as e:
             app.logger.warning(f"Could not initialize Kafka Producer: {e}")
     return _kafka_producer
+
+
+def sync_product_stock_to_opensearch(os_client, pg_conn, product_id):
+    """Sync updated stock from PostgreSQL directly into OpenSearch product document."""
+    if not os_client or not pg_conn:
+        return
+    try:
+        cur = pg_conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute(
+            "SELECT id, name, description, category, price, city, stock, image_url FROM products WHERE id = %s;",
+            (product_id,)
+        )
+        p = cur.fetchone()
+        cur.close()
+
+        if p:
+            doc = {
+                "id": int(p["id"]),
+                "name": p["name"],
+                "description": p["description"],
+                "category": p["category"],
+                "city": p["city"],
+                "price": float(p["price"]),
+                "stock": int(p["stock"]),
+                "image_url": p["image_url"],
+            }
+            os_client.index(
+                index="products",
+                id=str(p["id"]),
+                body=doc,
+                refresh=True,
+            )
+            opensearch_sync_log.append({
+                "product_id": p["id"],
+                "name": p["name"],
+                "stock": p["stock"],
+                "synced_at": datetime.now(timezone.utc).isoformat(),
+            })
+            print(f"[Kafka-OpenSearch Sync] Synced Product #{p['id']} ('{p['name']}') stock to {p['stock']}.")
+    except Exception as e:
+        print(f"[Kafka-OpenSearch Sync WARN] Failed to sync stock for product #{product_id}: {e}")
+
+
+def _kafka_consumer_loop():
+    """
+    Background daemon loop that listens for Kafka order events and syncs stock to OpenSearch.
+    Allows a single Render / Railway Web Service to run both the Flask API routes and live Kafka sync.
+    """
+    print("[Kafka Consumer Daemon] Starting background listener thread...")
+    ensure_kafka_certs()
+
+    if not KAFKA_BOOTSTRAP_SERVERS or any(ph in KAFKA_BOOTSTRAP_SERVERS for ph in ["YOUR_", "HOST:PORT"]):
+        print("[Kafka Consumer Daemon] Kafka bootstrap servers not configured. Background consumer idle.")
+        return
+
+    if not (os.path.exists(ca_file) and os.path.exists(cert_file) and os.path.exists(key_file)):
+        print("[Kafka Consumer Daemon] SSL certs not found on disk. Background consumer idle.")
+        return
+
+    group_id = os.getenv("KAFKA_GROUP_ID", "storesync-cloud-web-group")
+    topic = os.getenv("KAFKA_TOPIC", "order-events")
+
+    os_client = get_opensearch_client()
+    pg_conn = None
+    try:
+        if POSTGRES_URI and not any(ph in POSTGRES_URI for ph in ["YOUR_", "HOST:PORT"]):
+            pg_conn = psycopg2.connect(POSTGRES_URI)
+            print("[Kafka Consumer Daemon] Connected to PostgreSQL for stock sync.")
+    except Exception as e:
+        print(f"[Kafka Consumer Daemon] PostgreSQL connection warning: {e}")
+
+    try:
+        consumer = KafkaConsumer(
+            topic,
+            bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS.split(","),
+            group_id=group_id,
+            auto_offset_reset="latest",
+            enable_auto_commit=True,
+            security_protocol="SSL",
+            ssl_cafile=ca_file,
+            ssl_certfile=cert_file,
+            ssl_keyfile=key_file,
+            value_deserializer=lambda m: json.loads(m.decode("utf-8")),
+            consumer_timeout_ms=1500,
+        )
+        print(f"[Kafka Consumer Daemon] Listening on topic '{topic}' (group: {group_id})...")
+
+        while True:
+            try:
+                records = consumer.poll(timeout_ms=1000)
+                for _tp, messages in records.items():
+                    for message in messages:
+                        event = message.value
+                        event_type = event.get("event_type")
+                        order_id = event.get("order_id")
+                        items = event.get("items", [])
+
+                        telemetry_events.append({
+                            "event_type": f"CONSUMED_{event_type}",
+                            "order_id": order_id,
+                            "topic": topic,
+                            "partition": message.partition,
+                            "offset": message.offset,
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                        })
+
+                        if event_type in ["ORDER_PLACED", "ORDER_CANCELLED"]:
+                            for it in items:
+                                p_id = it.get("product_id")
+                                if p_id:
+                                    sync_product_stock_to_opensearch(os_client, pg_conn, p_id)
+
+                            if event_type == "ORDER_CANCELLED" and order_id and pg_conn:
+                                try:
+                                    cur = pg_conn.cursor()
+                                    cur.execute("UPDATE orders SET status = 'CANCELLED' WHERE id = %s;", (order_id,))
+                                    pg_conn.commit()
+                                    cur.close()
+                                except Exception:
+                                    pass
+
+                        elif event_type == "LOW_STOCK_ALERT":
+                            p_id = event.get("product_id")
+                            p_name = event.get("product_name")
+                            rem = event.get("remaining_stock")
+                            print(f"[Kafka Consumer Daemon] 🔥 SCARCITY: Product #{p_id} ('{p_name}') only {rem} left.")
+
+            except Exception:
+                time.sleep(2)
+
+    except Exception as e:
+        print(f"[Kafka Consumer Daemon] Consumer exited with error: {e}")
+    finally:
+        if pg_conn:
+            try:
+                pg_conn.close()
+            except Exception:
+                pass
+
+
+_consumer_daemon_started = False
+
+
+def start_kafka_consumer_thread():
+    """Launches the Kafka consumer loop in a single background daemon thread."""
+    global _consumer_daemon_started
+    if not _consumer_daemon_started:
+        _consumer_daemon_started = True
+        t = threading.Thread(target=_kafka_consumer_loop, daemon=True, name="StoreSyncKafkaConsumer")
+        t.start()
+        print("[BOOT] Kafka consumer background daemon thread launched.")
+
+
+# Auto-launch Kafka consumer daemon thread
+start_kafka_consumer_thread()
 
 
 def format_product(doc):
