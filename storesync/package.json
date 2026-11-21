@@ -5,9 +5,12 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
-    "api": "node server/index.js",
+    "api": "python backend/app.py",
+    "backend": "python backend/app.py",
+    "seed": "python backend/seed.py",
+    "consumer": "python backend/consumer.py",
     "build": "vite build",
-    "test": "node --test",
+    "test": "node --test server/domain.test.js",
     "preview": "vite preview --host 0.0.0.0"
   },
   "dependencies": {
