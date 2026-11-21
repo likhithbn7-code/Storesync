@@ -1,0 +1,14 @@
+# Environment variables & Aiven secrets
+.env
+*.env
+
+# Kafka SSL certificates
+certs/
+*.pem
+*.cert
+*.key
+
+# Python & Node artifacts
+venv/
+__pycache__/
+node_modules/
