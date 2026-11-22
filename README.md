@@ -1,11 +1,20 @@
-StoreSync — Real-Time Distributed Retail Inventory & Omnichannel Storefront
-StoreSync is a full-stack, event-driven retail platform designed to eliminate overselling and stale catalog search across multi-city stores (Bengaluru, Mumbai, Delhi, Hyderabad, Chennai). Built on Aiven PostgreSQL, Aiven Apache Kafka, and Aiven OpenSearch, it pairs atomic row-level concurrency locks with real-time search indexing, Razorpay/UPI checkout, Gmail SMTP OTP authentication, and a Groq-powered AI Shopping Assistant.
+# StoreSync — Real-Time Distributed Retail Inventory & Omnichannel Storefront
 
-Live Deployment
-Live Storefront (Vercel): https://storesync-mauve.vercel.app
-Live API Backend (Render): https://storesync-backend.onrender.com
-GitHub Repository: https://github.com/likhithbn7-code/Storesync
-Core Architecture & Event Pipeline
+**StoreSync** is a full-stack, event-driven retail platform designed to eliminate overselling and stale catalog search across multi-city stores (`Bengaluru`, `Mumbai`, `Delhi`, `Hyderabad`, `Chennai`). Built on **Aiven PostgreSQL**, **Aiven Apache Kafka**, and **Aiven OpenSearch**, it pairs atomic row-level concurrency locks with real-time search indexing, Razorpay/UPI checkout, Gmail SMTP OTP authentication, and a **Groq-powered AI Shopping Assistant**.
+
+---
+
+## Live Deployment
+
+* **Live Storefront (Vercel):** `https://storesync-mauve.vercel.app/`
+* **Live API Backend (Render):** `https://storesync-6ide.onrender.com/`
+* **GitHub Repository:** `https://github.com/likhithbn7-code/Storesync`
+
+---
+
+## Core Architecture & Event Pipeline
+
+```text
 [React + Vite Storefront]
          │
          ▼
@@ -102,77 +111,10 @@ Set-Content -Path "README.md" -Value @"
 **StoreSync** is a full-stack, event-driven retail platform designed to eliminate overselling and stale catalog search across multi-city stores (\`Bengaluru\`, \`Mumbai\`, \`Delhi\`, \`Hyderabad\`, \`Chennai\`). Built on **Aiven PostgreSQL**, **Aiven Apache Kafka**, and **Aiven OpenSearch**, it pairs atomic row-level concurrency locks with real-time search indexing, Razorpay/UPI checkout, Gmail SMTP OTP authentication, and a **Groq-powered AI Shopping Assistant**.
 
 ## Live Deployment
-* **Live Storefront (Vercel):** https://storesync-mauve.vercel.app
-* **Live API Backend (Render):** https://storesync-backend.onrender.com
+* **Live Storefront (Vercel):** https://storesync-mauve.vercel.app/
+* **Live API Backend (Render):** https://storesync-6ide.onrender.com/
 * **GitHub Repository:** https://github.com/likhithbn7-code/Storesync
 "@
 git add README.md
 git commit -m "Update README with live deployment links and architecture documentation"
 git push origin main
-StoreSync 🛒🇮🇳
-High-performance online retail storefront for an Indian retail chain expanding pan-India, powered by Aiven Cloud Services (PostgreSQL, Apache Kafka, and OpenSearch), featuring real-time multi-city inventory synchronization, strict row-level concurrency locks (SELECT ... FOR UPDATE), Groq AI Retail Concierge, 4-step Gmail SMTP OTP authentication, and Razorpay payment checkout.
-
-🌟 Key Features
-Aiven PostgreSQL (ACID Concurrency & Inventory):
-
-Atomic transactions with SELECT stock FROM products WHERE id = %s FOR UPDATE ensuring zero race conditions or overselling.
-Relational tables: products, orders, order_items, and users.
-Full 4-step Gmail SMTP OTP authentication flow (Sign Up, Sign In, Google Demo Sign In, Forgot Password OTP, Verify OTP, Reset Password).
-Aiven Apache Kafka (Event-Driven Stock Streaming):
-
-High-throughput streaming on order-events topic with SSL mTLS encryption (ca.pem, service.cert, service.key).
-Emits ORDER_PLACED, ORDER_CANCELLED, and LOW_STOCK_ALERT events.
-Background daemon thread automatically processes events and syncs updated stock to OpenSearch.
-Aiven OpenSearch (Typo-Tolerant Product Search):
-
-Fast sub-millisecond search across products, categories, descriptions, and city availability.
-Fuzzy search and typo tolerance (e.g., query "bluetoth" or "earphone" matches boAt Rockerz).
-Modern Hackathon Storefront (React 19 + Vite + Tailwind CSS):
-
-Hero Section: Live multi-city ticker (Bengaluru • Mumbai • Delhi • Hyderabad • Chennai) with 1-click smooth-scroll deal exploration.
-Quick View Modal: Instant product spec preview, reviews, city dispatch origin, and direct bag addition.
-Fuzzy Search Chips: One-click typo tags ("bluetoth", "saree", "mixer", "watch") demonstrating OpenSearch typo tolerance.
-Slide-Over Bag Drawer: Real-time free express delivery progress bar (threshold ₹2,499) with capped quantity steppers.
-Visual Order Tracking: 4-step horizontal progress tracker (Confirmed → Packed → Out for Delivery → Delivered) with real-time status transitions and stock-restoring cancellation.
-Groq AI Retail Concierge: Interactive AI chatbot providing real-time store catalogue recommendations and stock lookup across Indian cities.
-Razorpay Payment Gateway: UPI QR code modal, cards, and netbanking simulation with stock verification.
-🚀 Quick Start Guide
-1. Prerequisites
-Python 3.10 or 3.11+
-Node.js 18.x, 20.x, or 22.x
-Git 2.x+
-2. Backend Setup
-cd storesync/backend
-python -m venv venv
-
-# Windows
-.\venv\Scripts\Activate.ps1
-# macOS/Linux
-source venv/bin/activate
-
-pip install -r requirements.txt
-python seed.py
-python app.py
-3. Frontend Setup
-cd storesync
-npm install
-npm run dev
-Open http://localhost:5173 in your browser.
-
-☁️ Cloud Deployment (Render/Railway + Vercel)
-Service	Platform	Root Directory	Build Command	Start Command / Output
-Backend	Render / Railway	storesync/backend	pip install -r requirements.txt	gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 4
-Frontend	Vercel	storesync	npm run build	Output directory: dist (set VITE_API_URL)
-Environment Variables for Production
-Backend (Render/Railway):
-POSTGRES_URI: Aiven PostgreSQL connection URI with ?sslmode=require
-OPENSEARCH_URI: Aiven OpenSearch connection URI
-KAFKA_BOOTSTRAP_SERVERS: Aiven Kafka bootstrap servers (host:port)
-KAFKA_TOPIC: order-events
-KAFKA_CA_PEM: Contents of certs/ca.pem (auto-recreates certificates on boot)
-KAFKA_SERVICE_CERT: Contents of certs/service.cert
-KAFKA_SERVICE_KEY: Contents of certs/service.key
-GROQ_API_KEY: Groq API key for AI Concierge
-SMTP_EMAIL & SMTP_PASSWORD: Gmail App Password for OTP delivery
-Frontend (Vercel):
-VITE_API_URL: Your deployed backend URL (e.g. https://storesync-backend.onrender.com)
