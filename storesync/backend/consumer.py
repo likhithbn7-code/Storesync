@@ -32,7 +32,6 @@ key_file = os.path.join(certs_dir, "service.key")
 def ensure_kafka_certs():
     """Recreates certs from environment variables if missing on disk."""
     os.makedirs(certs_dir, exist_ok=True)
-    os.makedirs("certs", exist_ok=True)
     mapping = {
         ca_file: os.getenv("KAFKA_CA_PEM"),
         cert_file: os.getenv("KAFKA_SERVICE_CERT"),
@@ -40,30 +39,16 @@ def ensure_kafka_certs():
     }
     recreated = []
     for file_path, env_val in mapping.items():
-        if env_val and env_val.strip():
-            if not os.path.exists(file_path) or os.path.getsize(file_path) == 0:
-                try:
-                    content = env_val.strip().strip("'").strip('"')
-                    if "\\n" in content:
-                        content = content.replace("\\n", "\n")
-                    with open(file_path, "w", encoding="utf-8") as f:
-                        f.write(content + "\n")
-                    recreated.append(os.path.basename(file_path))
-                    # Also write to local ./certs/ if cwd is different from backend_dir
-                    local_path = os.path.join("certs", os.path.basename(file_path))
-                    if os.path.abspath(local_path) != os.path.abspath(file_path):
-                        with open(local_path, "w", encoding="utf-8") as lf:
-                            lf.write(content + "\n")
-                except Exception as e:
-                    print(f"[WARN] Failed to write certificate {file_path}: {e}")
-        elif os.path.exists(file_path):
-            local_path = os.path.join("certs", os.path.basename(file_path))
-            if os.path.abspath(local_path) != os.path.abspath(file_path) and (not os.path.exists(local_path) or os.path.getsize(local_path) == 0):
-                try:
-                    with open(file_path, "r", encoding="utf-8") as rf, open(local_path, "w", encoding="utf-8") as wf:
-                        wf.write(rf.read())
-                except Exception:
-                    pass
+        if not os.path.exists(file_path) and env_val:
+            try:
+                content = env_val.strip()
+                if "\\n" in content and "\n" not in content:
+                    content = content.replace("\\n", "\n")
+                with open(file_path, "w", encoding="utf-8") as f:
+                    f.write(content + "\n")
+                recreated.append(os.path.basename(file_path))
+            except Exception as e:
+                print(f"[WARN] Failed to write certificate {file_path}: {e}")
     if recreated:
         print(f"[BOOT] Recreated Kafka SSL certs from environment variables: {', '.join(recreated)}")
 
